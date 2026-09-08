@@ -1,0 +1,40 @@
+[project]
+name = "netadopt"
+version = "0.1.0"
+description = "Read a network-automation repository and adopt its model into Kubernetes"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "mbakalarski", email = "64490638+mbakalarski@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyyaml>=6.0.3",
+    "typer>=0.27.2",
+]
+
+[project.optional-dependencies]
+# For a machine with no pipeline of its own: `uvx "netadopt[ansible]" ./repo`.
+# PATH is still preferred at run time -- see netadopt.ansible.resolve_ansible.
+#
+# Unbounded on purpose. Each ecosystem states its own ansible-core window in its
+# collection's meta/runtime.yml and moves it over time; that number is read from the
+# repository at run time and reported, never frozen here.
+ansible = ["ansible-core"]
+
+[project.scripts]
+netadopt = "netadopt.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "netadopt[ansible]",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
