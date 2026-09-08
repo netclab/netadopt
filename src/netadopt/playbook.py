@@ -18,6 +18,8 @@ from pathlib import Path
 
 import yaml
 
+from netadopt import ansible_yaml
+
 # Where a role reference sits. Three different things with three different
 # precedences: the roles: keyword runs before tasks and its parameters outrank host
 # vars, import_role is static, include_role is resolved as the play runs. Flattening
@@ -77,10 +79,9 @@ def read_playbook(repo: Path, name: str) -> Playbook:
         return Playbook(path=path, problem=f"{path} could not be read: {err}")
 
     try:
-        # Ansible's YAML is not plain YAML: it knows !vault and !unsafe. An unknown
-        # tag fails loudly here, with its name and line, rather than being dropped --
-        # a silently lost value is a fidelity defect nothing downstream could detect.
-        document = yaml.safe_load(text)
+        # Ansible's dialect, not plain YAML -- a play's vars: can carry !vault like
+        # any other vars. See ansible_yaml: an unknown tag still fails loudly.
+        document = ansible_yaml.load(text, path)
     except yaml.YAMLError as err:
         return Playbook(path=path, problem=f"{path} is not readable as YAML: {err}")
 

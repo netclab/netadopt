@@ -1,0 +1,113 @@
+"""What must hold for any repository, whoever wrote it.
+
+Nothing here asserts a number and nothing here names an ecosystem. These run
+against repositories that change without us, so a failure has to mean we read one
+wrongly -- never that somebody made a release.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from netadopt.ansible import Ansible, resolve_ansible
+from netadopt.inventory import Inventory, read_inventory
+from netadopt.playbook import find_playbooks, read_playbook
+from netadopt.varfiles import GROUP_VARS, INVENTORY_ROOT, read_vars
+
+
+@pytest.fixture(scope="session")
+def ansible() -> Ansible:
+    found = resolve_ansible()
+    if not found.usable:
+        pytest.skip(f"no Ansible to ask: {found.problem}")
+    return found
+
+
+@pytest.fixture
+def listed(ansible: Ansible, repo: Path, inventory_source: str | None) -> Inventory:
+    inventory = read_inventory(ansible, repo, inventory_source)
+    if not inventory.usable:
+        # A repository with no inventory of its own is a fact about it, not a
+        # failure of ours. The reader already reported why.
+        pytest.skip(f"no inventory: {inventory.problem}")
+    return inventory
+
+
+def test_every_vars_file_is_either_read_or_reported(repo: Path, inventory_source: str | None):
+    # Never both, never neither: a file with no data and no problem is one we
+    # dropped without noticing, which is the failure this whole tier exists for.
+    found = read_vars(repo, inventory_source)
+
+    for file in found.files:
+        assert (file.data is None) != (file.problem is None), file.path
+
+
+def test_every_playbook_is_either_read_or_reported(repo: Path):
+    for path in sorted(repo.glob("*.yml")) + sorted(repo.glob("*.yaml")):
+        read = read_playbook(repo, path.name)
+
+        assert read.usable or read.problem, path
+        # Plays are addressed by position, so the positions have to be the file's.
+        assert [play.index for play in read.plays] == list(range(len(read.plays))), path
+
+
+def test_a_candidate_playbook_is_one_we_can_read(repo: Path):
+    # find_playbooks answers "which file could you mean", so every answer it gives
+    # has to survive being read for real.
+    for candidate in find_playbooks(repo):
+        again = read_playbook(repo, candidate.path.name)
+
+        assert again.usable, candidate.path
+        assert len(again.plays) == len(candidate.plays)
+
+
+def test_group_vars_reach_the_hosts_ansible_puts_in_that_group(
+    repo: Path, inventory_source: str | None, listed: Inventory
+):
+    """The differential check: our file-to-group mapping against Ansible's merge.
+
+    A key set for a group must appear in every member host's merged vars. A higher
+    precedence can change the value -- so only presence is asserted -- but nothing
+    removes the key. If we attributed a file to the wrong scope, this is where it
+    shows.
+    """
+    # Only what Ansible was in a position to see: ansible-inventory reads the
+    # group_vars beside the inventory, and not the ones beside a playbook.
+    beside = [
+        file
+        for file in read_vars(repo, inventory_source).files
+        if file.vars_dir == GROUP_VARS and file.root == INVENTORY_ROOT and file.data
+    ]
+    if not beside:
+        pytest.skip("no group_vars beside the inventory")
+
+    # A single file naming a group that does not exist is dead weight in his
+    # repository, not our defect. All of them failing to match is us reading the
+    # scope out of the wrong place -- and without this line that mistake turns the
+    # loop below into a silent skip, which is how it got past this test once.
+    known = [file for file in beside if file.scope in listed.groups]
+    assert known, f"none of {len(beside)} group_vars files names a group Ansible knows"
+
+    for file in known:
+        for host in _members(listed, file.scope):
+            merged = listed.hostvars.get(host, {})
+            for key in file.data:
+                assert key in merged, f"{file.path}: {key} never reached {host}"
+
+
+def _members(listed: Inventory, group: str) -> set[str]:
+    """Hosts of a group and of every group under it, as Ansible nests them."""
+    hosts: set[str] = set()
+    pending = [group]
+    seen: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        node = listed.groups.get(name, {})
+        hosts.update(node.get("hosts", []))
+        pending.extend(node.get("children", []))
+    return hosts
