@@ -1,12 +1,9 @@
 """The command line.
 
-One tool, one subcommand per ecosystem. The subcommand exists whether or not its
-extra is installed: one missing from --help tells the user nothing, one that is
-there and names what is missing tells him what to install. So nothing an ecosystem
-needs is imported at start-up.
+One subcommand per ecosystem, present whether or not its extra is installed -- so
+nothing an ecosystem needs is imported at start-up.
 
-The default verb is the report. Deeper verbs are the same computation carried
-further, and they come later.
+The default verb is the report.
 """
 
 from __future__ import annotations
@@ -29,11 +26,10 @@ app = typer.Typer(
 
 @app.callback()
 def _root() -> None:
-    """A callback with no options of its own, and it is load-bearing.
+    """No options of its own, and load-bearing.
 
-    Without it typer collapses a one-command app into the root command: `netadopt
-    avd` would not exist today and would appear by itself the day `nac` is added.
-    The shape of the CLI must not depend on how many ecosystems are implemented.
+    Without it typer collapses a one-command app into the root command: `netadopt avd`
+    would not exist until a second subcommand appeared.
     """
 
 
@@ -48,9 +44,8 @@ def avd(
             help="the repository directory",
         ),
     ],
-    # A repository has several playbooks and only he knows which one builds the
-    # fabric. Its PLAYS are not named: they are enumerated and reported, because a
-    # playbook can hold two plays with the same name -- ours does.
+    # One playbook is named; its plays are not -- a playbook can hold two plays with
+    # the same name, as AVD's twodc scenario does.
     playbook: Annotated[
         str | None,
         typer.Option(help="playbook to read, relative to the repository"),
@@ -70,9 +65,8 @@ def avd(
     found = resolve_ansible(ansible)
     typer.echo(_ansible_report(found))
 
-    # Every part is reported before anything decides the run failed: a repository
-    # with no readable inventory can still have a playbook worth showing him, and a
-    # report that stops at the first bad news is the one nobody can act on.
+    # Every part is reported before anything decides the run failed: an unreadable
+    # inventory does not hide a readable playbook.
     listed = read_inventory(found, repo, inventory)
     typer.echo(_inventory_report(listed))
 
@@ -84,9 +78,9 @@ def avd(
         typer.echo(_playbook_report(read))
 
     if not found.usable:
-        raise typer.Exit(1)  # nothing measured here can be trusted without Ansible
+        raise typer.Exit(1)  # no Ansible
     if read is None or not read.usable or not listed.usable:
-        raise typer.Exit(2)  # something he has to name or fix
+        raise typer.Exit(2)  # no playbook named, or it or the inventory did not read
     raise typer.Exit(0)
 
 
@@ -98,10 +92,10 @@ def _ansible_report(found: Ansible) -> str:
         )
 
     lines = [f"ansible    {found.core}  {found.exe}  (python {found.python})"]
-    if not found.his:
-        # Not a complaint about our install -- a statement about what every number
-        # below it means. His CI runs an ansible-core we did not measure.
-        lines.append("           note: ours, not the Ansible this repo is run with")
+    if found.bundled:
+        lines.append(
+            "           note: bundled ansible-core, not the Ansible this repo is run with"
+        )
     for path in found.collections:
         lines.append(f"           collections {path}")
     return "\n".join(lines)
@@ -122,8 +116,7 @@ def _playbook_report(read: Playbook) -> str:
             f"  hosts {str(play.hosts):{hosts_width}}"
             f"  tasks {play.task_count}{vars_seen}"
         )
-        # How the role is pulled in is printed, not summarised away: the roles:
-        # keyword, import_role and include_role are three different precedences.
+        # how the role is pulled in, printed: three different precedences
         for role in play.roles:
             lines.append(f"       {role.how:14} {role.name}")
     return "\n".join(lines)
@@ -136,8 +129,7 @@ def _inventory_report(listed: Inventory) -> str:
 
     groups = len(listed.groups)
     lines = [f"inventory  {where}  -- {groups} groups, {len(listed.hosts)} hosts"]
-    # Ansible's warnings are about his repository, not about us, and they are the
-    # kind of thing that explains a host count he did not expect.
+    # Ansible's own stderr, printed under the count it explains.
     for warning in listed.warnings:
         lines.append(f"           {warning}")
     return "\n".join(lines)

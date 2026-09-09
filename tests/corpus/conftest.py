@@ -1,16 +1,15 @@
-"""Wiring for the corpus tier: our readers, run over somebody else's repositories.
+"""Wiring for the corpus tier: the readers, run over somebody else's repositories.
 
 Finding repositories is specific -- AVD keeps its examples inside the collection,
 netascode ships whole example repositories instead -- so it is done here, in the
 wiring. pytest allows one conftest per directory, so a second ecosystem is a second
 function beside `_avd_repos` and a second line in `_repos`, not a second file.
 
-The line to hold is that no test file names an ecosystem: what they assert has to
-be true of any repository. Properties only, no counts -- a count belongs to whoever
-publishes the corpus and would go red to report their release, not our regression.
+No test file names an ecosystem: what they assert has to hold for any repository.
+Properties only, no counts -- a count goes red on somebody else's release.
 
-A checkout is named by an environment variable and these tests skip without one;
-that path is somebody's laptop, so it is not written down here.
+A checkout is named by an environment variable and these tests skip without one; the
+path is somebody's laptop, so it is not written down here.
 """
 
 from __future__ import annotations
@@ -72,7 +71,7 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
 @pytest.fixture
 def inventory_source(repo: Path) -> str | None:
-    """His -i, as the repository states it: a directory, a file, or nothing."""
+    """The -i argument, as the repository states it: a directory, a file, or nothing."""
     if (repo / "inventory").is_dir():
         return "inventory/"
     if (repo / "inventory.yml").is_file():

@@ -1,14 +1,11 @@
 """Reading a playbook, as written.
 
-We read the file rather than asking Ansible. A copied repository usually has no
-collections installed, and `ansible-playbook --list-tasks` fails there on the first
-import_role -- measured, on AVD's own example. And where it does work it prints the
-tasks inside the role, not the two tasks he wrote; what a Fabric carries is his play
-verbatim.
+The file, not `ansible-playbook --list-tasks`: with no collections installed it fails
+on the first import_role -- measured on AVD's example -- and where it works it prints
+the tasks inside the role, not the ones the play holds.
 
-Nothing here decides what a play means. A play that pulls in a role reports the role
-and where the reference sits; naming the role that matters is the caller's job, so a
-renamed role changes the report instead of emptying it.
+A play that pulls in a role reports the role and where the reference sits. Nothing
+here decides what a role means.
 """
 
 from __future__ import annotations
@@ -20,17 +17,13 @@ import yaml
 
 from netadopt import ansible_yaml
 
-# Where a role reference sits. Three different things with three different
-# precedences: the roles: keyword runs before tasks and its parameters outrank host
-# vars, import_role is static, include_role is resolved as the play runs. Flattening
-# them into one "roles" column would be a lie, so they keep their names.
-ROLES_KEYWORD = "roles-keyword"
-IMPORT_ROLE = "import_role"
-INCLUDE_ROLE = "include_role"
+# Where a role reference sits. Three things, three precedences, so three names.
+ROLES_KEYWORD = "roles-keyword"  # runs before tasks; its params outrank host vars
+IMPORT_ROLE = "import_role"      # static, resolved when the playbook is parsed
+INCLUDE_ROLE = "include_role"    # resolved as the play runs
 
-# Play keys whose value is a list of tasks. handlers are read too: a role reference
-# can sit in one, and reporting a play as roleless because we did not look is worse
-# than reporting a handler.
+# Play keys whose value is a list of tasks. handlers are read too -- a role reference
+# can sit in one.
 TASK_KEYS = ("pre_tasks", "tasks", "post_tasks", "handlers")
 
 # Task keys holding nested tasks.
@@ -79,8 +72,7 @@ def read_playbook(repo: Path, name: str) -> Playbook:
         return Playbook(path=path, problem=f"{path} could not be read: {err}")
 
     try:
-        # Ansible's dialect, not plain YAML -- a play's vars: can carry !vault like
-        # any other vars. See ansible_yaml: an unknown tag still fails loudly.
+        # Ansible's dialect: a play's vars: can carry !vault like any other vars.
         document = ansible_yaml.load(text, path)
     except yaml.YAMLError as err:
         return Playbook(path=path, problem=f"{path} is not readable as YAML: {err}")
@@ -108,9 +100,8 @@ def read_playbook(repo: Path, name: str) -> Playbook:
 def find_playbooks(repo: Path) -> tuple[Playbook, ...]:
     """Every top-level file that reads as a list of plays, by name.
 
-    A repository holds several playbooks -- build, deploy, validate -- and only he
-    knows which one builds the fabric. This does not guess: it narrows the question
-    down to the files that could be an answer.
+    A repository holds several -- build, deploy, validate. Which one builds the fabric
+    is not guessed here; these are the files that could be an answer.
     """
     candidates = sorted(
         path for pattern in ("*.yml", "*.yaml") for path in repo.glob(pattern)

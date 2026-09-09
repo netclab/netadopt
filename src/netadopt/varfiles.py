@@ -7,8 +7,8 @@ arrives merged into every host. What is wanted here is the input to that merge, 
 group, because that is what one FabricInput is.
 
 Nothing is merged and no precedence is written down. Each file is reported with its
-scope and the root it was found under; Ansible applies its own rule later, to his
-own tree.
+scope and the root it was found under; Ansible applies its own rule later, to its own
+tree.
 """
 
 from __future__ import annotations
@@ -94,9 +94,8 @@ def _read_directory(directory: Path, vars_dir: str, root: str) -> list[VarFile]:
 
     files: list[VarFile] = []
     for entry in sorted(directory.iterdir()):
-        # A scope is one file or a directory of them. Ansible merges such a
-        # directory into a single namespace; here the files stay separate under the
-        # same scope, because merging is the thing we are deliberately not doing.
+        # A scope is one file or a directory of them. Ansible merges such a directory
+        # into a single namespace; here the files stay separate under the same scope.
         if entry.is_dir():
             for inner in sorted(path for path in entry.rglob("*") if path.is_file()):
                 if _is_vars_file(inner):
@@ -127,13 +126,12 @@ def _read_file(path: Path, scope: str, vars_dir: str, root: str) -> VarFile:
     try:
         loaded = ansible_yaml.load(text, path)
     except yaml.YAMLError as err:
-        # A file encrypted whole lands here: its first line is the vault header and
-        # it is not YAML at all. That is a fact about his repository, so it is
-        # reported against the one file rather than stopping the whole read.
+        # broken YAML, or a tag nothing constructs: `thing: !secret x`
         return replace(here, problem=str(err).replace("\n", " "))
 
     if loaded is None:  # an empty file is legal, and sets nothing
         return replace(here, data={})
     if not isinstance(loaded, dict):
+        # `ansible-vault encrypt` on the whole file gives one scalar, not vars
         return replace(here, problem=f"is {type(loaded).__name__}, not a mapping")
     return replace(here, data=loaded)

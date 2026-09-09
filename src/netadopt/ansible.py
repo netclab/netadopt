@@ -1,12 +1,7 @@
 """Finding the Ansible to run.
 
-His pipeline wins whenever he has one, so PATH is asked first. The `ansible` extra
-is a fallback for a machine that has no pipeline -- a copied repository on a laptop
--- and when it is what we end up using, the report says so: measuring on our
-ansible-core is measuring something his CI never runs.
-
-The answer is always a value -- never an exception, never sys.exit. A report that
-says "no Ansible" is a useful report.
+PATH first, the `ansible` extra behind it; `source` says which one answered.
+The answer is always a value -- never an exception, never sys.exit.
 """
 
 from __future__ import annotations
@@ -18,11 +13,9 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-# One install, several executables. We probe ansible-playbook and not ansible: it is
-# the one we actually run, and on a broken install the two do not always agree. The
-# others are found beside it -- see Ansible.beside -- never looked up again on PATH.
+# Probed rather than `ansible`: it is the one being run, and on a broken install the
+# two do not always agree.
 PLAYBOOK_EXE = "ansible-playbook"
-INVENTORY_EXE = "ansible-inventory"
 
 _CORE = re.compile(r"\[core ([^\]]+)\]")          # 2.10+  "ansible-playbook [core 2.16.3]"
 _OLD = re.compile(r"^\S+\s+([0-9][^\s]*)")        # 2.9    "ansible-playbook 2.9.27"
@@ -47,8 +40,7 @@ class Ansible:
     def beside(self, name: str) -> Path | None:
         """Another executable from this same install, or None if it is not there.
 
-        Asking one install about another install's inventory would be a lie, so the
-        sibling is taken by location and never looked up on PATH again.
+        Taken from this install's own directory, not from PATH.
         """
         if self.exe is None:
             return None
@@ -56,9 +48,9 @@ class Ansible:
         return found if found.exists() else None
 
     @property
-    def his(self) -> bool:
-        """False when the report is about our ansible-core and not his."""
-        return self.source != "bundled"
+    def bundled(self) -> bool:
+        """True when the fallback answered, and not an Ansible already installed."""
+        return self.source == "bundled"
 
 
 def find_ansible(exe: str | None = None) -> Ansible:
@@ -69,8 +61,7 @@ def find_ansible(exe: str | None = None) -> Ansible:
     target = exe or PLAYBOOK_EXE
     found = shutil.which(target)
     if found is None:
-        # A path he typed and a name looked up on PATH fail for different reasons,
-        # and telling him the wrong one sends him to fix the wrong thing.
+        # a typed path and a name looked up on PATH fail for different reasons
         where = "not found" if Path(target).name != target else "not found on PATH"
         return Ansible(problem=f"{target} {where}")
 
@@ -80,7 +71,7 @@ def find_ansible(exe: str | None = None) -> Ansible:
             capture_output=True,
             text=True,
             timeout=60,
-            # Nothing we run may ever ask the user a question -- see inventory.py.
+            # closed, so a subprocess cannot stop for a prompt
             stdin=subprocess.DEVNULL,
         )
     except OSError as err:  # not executable, wrong architecture, bad interpreter
@@ -89,8 +80,7 @@ def find_ansible(exe: str | None = None) -> Ansible:
         return Ansible(exe=found, problem=f"{found} --version did not return in 60s")
 
     if done.returncode != 0:
-        # An install broken by its own dependencies fails here, and its stderr is
-        # the only useful thing anyone can say about it -- so it is carried, whole.
+        # an install broken by its own dependencies fails here; its stderr, whole
         detail = (done.stderr or done.stdout).strip() or f"exit {done.returncode}"
         return Ansible(exe=found, problem=f"{found} --version failed: {detail}")
 
@@ -98,7 +88,7 @@ def find_ansible(exe: str | None = None) -> Ansible:
 
 
 def resolve_ansible(exe: str | None = None) -> Ansible:
-    """PATH first, ours second. His pipeline wins whenever he has one."""
+    """PATH first, the bundled ansible-core second."""
     if exe:
         return replace(find_ansible(exe), source="given")
 
@@ -106,9 +96,8 @@ def resolve_ansible(exe: str | None = None) -> Ansible:
     if found.usable:
         return replace(found, source="PATH")
 
-    # The extra installs ansible-playbook beside our own interpreter. When netadopt
-    # runs as a tool (uvx), that directory is not necessarily on the user's PATH, so
-    # it is looked up by location and not by name.
+    # The extra installs ansible-playbook beside this interpreter. Under uvx that
+    # directory need not be on PATH, so it is found by location and not by name.
     bundled = Path(sys.executable).parent / PLAYBOOK_EXE
     if not bundled.exists():
         return found  # keep the PATH problem: with no fallback it is the one to report

@@ -1,17 +1,10 @@
 """Reading YAML the way Ansible reads it.
 
-Ansible's YAML is not plain YAML: it carries `!vault` and `!unsafe`, and
-`yaml.safe_load` raises on both. Dropping the tag instead would be worse than
-raising -- `yq -o=json` does exactly that, and a vault value comes out looking like
-an ordinary string that nothing downstream can tell apart.
+`!vault` and `!unsafe` are Ansible's, and `yaml.safe_load` raises on both. Here they
+become the shapes `ansible-inventory --list` prints: {"__ansible_vault": ...} and
+{"__ansible_unsafe": ...}.
 
-The shapes below are Ansible's own, not ours: `ansible-inventory --list` prints
-{"__ansible_vault": ...} and {"__ansible_unsafe": ...} for the same values, so the
-reader that runs Ansible and the reader that opens the file agree.
-
-Any other tag still raises, with its name and the line it is on. An unknown tag is
-something we have not understood, and understanding it later is cheap; a value
-silently changed in transit is not detectable at all.
+Any other tag still raises, with its name and the line it is on.
 """
 
 from __future__ import annotations
@@ -30,8 +23,7 @@ class AnsibleLoader(yaml.SafeLoader):
 
 
 def _vault(loader: AnsibleLoader, node: yaml.Node) -> dict[str, str]:
-    # The ciphertext, whole. No password is needed to carry it, and none is asked
-    # for: a prompt in the middle of a report is not something we do.
+    # the ciphertext, whole -- carrying it needs no password
     return {VAULT_KEY: loader.construct_scalar(node)}
 
 
@@ -49,7 +41,7 @@ def load(text: str, path: Path | str | None = None) -> object:
     """Parse one document. Raises yaml.YAMLError, naming `path` in the message."""
     stream = io.StringIO(text)
     if path is not None:
-        # PyYAML reports the stream's name in its error marks, so this is what puts
-        # his filename into the message instead of "<unicode string>".
+        # PyYAML reports the stream name in its error marks: the filename, not
+        # "<unicode string>".
         stream.name = str(path)
     return yaml.load(stream, AnsibleLoader)

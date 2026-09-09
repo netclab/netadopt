@@ -1,13 +1,12 @@
 """The inventory, as Ansible resolves it.
 
-Here we do ask Ansible, and it answers with no collection installed at all --
-measured on AVD's own examples. That matters, because the inventory is where
-guessing would go wrong: a directory of files instead of one, several sources named
-in ansible.cfg, host ranges, inventory plugins, and group_vars merged in by rules
-that are Ansible's and not ours.
+`ansible-inventory --list` answers with no collection installed -- measured on AVD's
+examples. It resolves what guessing would get wrong: a directory of files instead of
+one, several sources named in ansible.cfg, host ranges, inventory plugins, group_vars
+merged in.
 
-What comes back is his tree: group names, membership, and the hostvars Ansible
-already merged. Nothing is renamed and nothing is flattened.
+What comes back is the tree Ansible built: group names, membership, and merged
+hostvars. Nothing is renamed and nothing is flattened.
 """
 
 from __future__ import annotations
@@ -17,16 +16,15 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from netadopt.ansible import INVENTORY_EXE, Ansible
+from netadopt.ansible import Ansible
 
-# Ansible says this on stderr and still exits 0 with a valid, empty answer. Passing
-# that on as "no hosts" would be a different statement from "nobody said where the
-# inventory is", and only the second one is true.
+# Looked up next to ansible-playbook, not on PATH.
+INVENTORY_EXE = "ansible-inventory"
+
+# Matched in stderr: Ansible prints it, then exits 0 with a valid, empty answer.
 NOTHING_PARSED = "No inventory was parsed"
 
-# Measured on the largest inventories in AVD's corpus -- 340 host_vars files, 501
-# devices -- at 0.8 to 2.4 seconds. This is a "something is wrong" limit, not a
-# capacity limit, so it is generous against that and still short enough to hit.
+# Far above what even a large inventory needs, measured in seconds.
 TIMEOUT = 60
 
 
@@ -50,9 +48,9 @@ class Inventory:
 def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> Inventory:
     """Run `ansible-inventory --list` in `repo` and return what it says.
 
-    `source` is his -i argument: a file, a directory, or nothing at all when
-    ansible.cfg names it. The command runs with `repo` as its working directory,
-    because that is the only place Ansible looks for an ansible.cfg.
+    `source` is the -i argument: a file, a directory, or nothing at all when
+    ansible.cfg names it. The command runs with `repo` as its working directory --
+    the only place Ansible looks for an ansible.cfg.
     """
     if not ansible.usable:
         return Inventory(source=source, problem=f"no Ansible to ask: {ansible.problem}")
@@ -74,9 +72,7 @@ def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> I
             capture_output=True,
             text=True,
             timeout=TIMEOUT,
-            # Nothing we run may ever ask the user a question. A vault password
-            # prompt reaching an interactive terminal would stop the tool dead in
-            # the middle of a report; closed, it becomes an error we can print.
+            # closed, so a vault password prompt becomes an error instead of a hang
             stdin=subprocess.DEVNULL,
         )
     except OSError as err:
@@ -87,10 +83,9 @@ def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> I
     warnings = tuple(line for line in done.stderr.splitlines() if line.strip())
 
     if done.returncode != 0:
-        # His inventory failing is a result, not an accident of ours, and Ansible's
-        # own message is the one that says where to look. An encrypted group_vars
-        # file with no password reaches him here as
-        # "Attempting to decrypt but no vault secrets found." -- measured.
+        # Ansible's own stderr, whatever failed -- a bad -i path, a missing inventory
+        # plugin, a whole-file vault with no password; the exit code if it said
+        # nothing.
         detail = done.stderr.strip() or f"exit {done.returncode}"
         return Inventory(source=source, warnings=warnings, problem=detail)
 
@@ -111,9 +106,8 @@ def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> I
             "or set inventory= in ansible.cfg",
         )
 
-    # A !vault value survives this without a password: Ansible hands it over as
-    # {"__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n..."} -- the ciphertext whole,
-    # no prompt, no error. Measured. So it can be carried faithfully and spotted.
+    # A !vault value needs no password: Ansible hands over
+    # {"__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n..."} -- exit 0, no prompt.
     meta = listed.pop("_meta", {})
     return Inventory(
         source=source,

@@ -1,10 +1,4 @@
-"""Which vars files Ansible would read, and what we make of them.
-
-Written-out fixtures, not AVD's repositories. The corpus holds one `!vault` and one
-`!unsafe` in 1331 files, and none at all of the cases decided here -- a file
-encrypted whole, a vars file that is not a mapping, group_vars under both roots at
-once. Variety that arrives by luck cannot pin behaviour.
-"""
+"""Which vars files Ansible would read, and what comes out of them."""
 
 from __future__ import annotations
 
@@ -38,7 +32,7 @@ def repo(tmp_path: Path):
 def test_a_directory_of_files_is_one_scope_not_several(repo):
     # AVD's single-dc-l3ls writes group_vars/FABRIC/ as two files. Ansible merges
     # them into one namespace and one FabricInput is per GROUP, so both files report
-    # the same scope -- while staying separate here, because merging is not ours.
+    # the same scope -- while staying separate here: nothing is merged.
     repo("group_vars/FABRIC/connectivity.yml", "ansible_user: arista\n")
     repo("group_vars/FABRIC/fabric.yml", "fabric_name: FABRIC\n")
 
@@ -50,8 +44,7 @@ def test_a_directory_of_files_is_one_scope_not_several(repo):
 
 def test_both_roots_are_read_and_stay_apart(repo):
     # Ansible consults group_vars beside the inventory AND beside the playbook, at
-    # different precedences. Merging them, or picking one, would be us writing down
-    # a precedence we promised not to write down.
+    # different precedences. Neither root is merged into the other, neither dropped.
     repo("inventory/hosts.yml", "all:\n  children:\n    FABRIC:\n")
     repo("inventory/group_vars/FABRIC.yml", "fabric_name: FROM_INVENTORY\n")
     repo("group_vars/FABRIC.yml", "fabric_name: FROM_PLAYBOOK\n")
@@ -97,8 +90,7 @@ def test_a_hostname_with_dots_keeps_them(repo):
 
 
 def test_vault_and_unsafe_survive_in_ansibles_own_shape(repo):
-    # The shapes `ansible-inventory --list` prints, so the reader that runs Ansible
-    # and the reader that opens the file say the same thing.
+    # the shapes `ansible-inventory --list` prints for the same values
     repo(
         "group_vars/WAN.yml",
         """
@@ -116,8 +108,7 @@ def test_vault_and_unsafe_survive_in_ansibles_own_shape(repo):
 
 
 def test_an_unknown_tag_is_a_problem_naming_the_tag_and_the_file(repo):
-    # An unknown tag is something we have not understood yet, and understanding it
-    # later is cheap. A value silently changed in transit is not detectable at all.
+    # an unknown tag fails, naming the tag and the file
     repo("group_vars/FABRIC.yml", "thing: !surprise value\n")
 
     file = read_vars(repo.dir).files[0]
@@ -128,8 +119,8 @@ def test_an_unknown_tag_is_a_problem_naming_the_tag_and_the_file(repo):
 
 
 def test_a_file_encrypted_whole_is_reported_against_that_file_only(repo):
-    # Its first line is the vault header, so it is not YAML at all. Every other file
-    # in the repository is still read.
+    # `ansible-vault encrypt` on the whole file gives one scalar, not vars. Every
+    # other file in the repository is still read.
     repo("group_vars/SECRET.yml", "$ANSIBLE_VAULT;1.1;AES256\n62313365396662\n")
     repo("group_vars/FABRIC.yml", "fabric_name: FABRIC\n")
 
@@ -169,8 +160,7 @@ def test_leftovers_are_passed_over_the_way_ansible_passes_over_them(repo):
 
 
 def test_a_file_with_no_suffix_is_a_vars_file(repo):
-    # Ansible accepts an extensionless file, and a repository that uses them would
-    # otherwise be reported as having no variables at all.
+    # Ansible accepts an extensionless file as a vars file.
     repo("group_vars/FABRIC", "fabric_name: FABRIC\n")
 
     found = read_vars(repo.dir)

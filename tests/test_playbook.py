@@ -1,7 +1,7 @@
-"""What a playbook says, and what we make of it.
+"""Reading a playbook file.
 
-The fixtures here are written out rather than taken from AVD: these tests pin our
-behaviour, and must not move when somebody else releases.
+Fixtures written out here, not taken from AVD: a release elsewhere must not move
+these assertions.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ def repo(tmp_path: Path):
 
 def test_plays_are_listed_in_file_order_including_ones_that_pull_in_nothing(repo):
     # The shape of AVD's own converge.yml: two fabric plays with a bookkeeping play
-    # between them. The middle one is reported, not silently dropped -- otherwise
-    # play [2] would be renumbered and stop matching the file he wrote.
+    # between them. Drop the middle one and play [2] is renumbered, no longer matching
+    # the file.
     repo(
         "converge.yml",
         """
@@ -125,8 +125,7 @@ def test_where_a_role_comes_from_is_reported_not_flattened(repo):
 
 
 def test_a_role_inside_a_block_is_still_found(repo):
-    # Reporting a play as roleless because the reference was nested would be worse
-    # than reporting one too many.
+    # a role reference nested in a block still counts
     repo(
         "blocked.yml",
         """
@@ -152,8 +151,8 @@ def test_a_role_inside_a_block_is_still_found(repo):
 
 
 def test_hosts_is_carried_as_written(repo):
-    # A pattern and a list are both legal, and neither is normalised: Ansible
-    # resolves them, we do not.
+    # A pattern and a list are both legal, and neither is normalised -- Ansible
+    # resolves them.
     repo(
         "hosts.yml",
         """
@@ -170,8 +169,8 @@ def test_hosts_is_carried_as_written(repo):
 
 
 def test_raw_is_the_play_verbatim(repo):
-    # raw is what Fabric.spec.play carries, so it must survive being written back
-    # out unchanged -- keys we never look at included.
+    # raw is what Fabric.spec.play carries: it survives being written back out
+    # unchanged, unread keys included.
     body = """
         - name: Converge
           hosts: TWODC

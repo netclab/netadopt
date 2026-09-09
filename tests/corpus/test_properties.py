@@ -1,8 +1,7 @@
 """What must hold for any repository, whoever wrote it.
 
-Nothing here asserts a number and nothing here names an ecosystem. These run
-against repositories that change without us, so a failure has to mean we read one
-wrongly -- never that somebody made a release.
+Properties only: no counts, no ecosystem names. These repositories move on their own
+release schedule, so a red test here means one was read wrongly.
 """
 
 from __future__ import annotations
@@ -29,15 +28,14 @@ def ansible() -> Ansible:
 def listed(ansible: Ansible, repo: Path, inventory_source: str | None) -> Inventory:
     inventory = read_inventory(ansible, repo, inventory_source)
     if not inventory.usable:
-        # A repository with no inventory of its own is a fact about it, not a
-        # failure of ours. The reader already reported why.
+        # no inventory of its own is a fact about the repository; problem says why
         pytest.skip(f"no inventory: {inventory.problem}")
     return inventory
 
 
 def test_every_vars_file_is_either_read_or_reported(repo: Path, inventory_source: str | None):
-    # Never both, never neither: a file with no data and no problem is one we
-    # dropped without noticing, which is the failure this whole tier exists for.
+    # Never both, never neither: no data and no problem means a file went missing
+    # unnoticed.
     found = read_vars(repo, inventory_source)
 
     for file in found.files:
@@ -54,8 +52,7 @@ def test_every_playbook_is_either_read_or_reported(repo: Path):
 
 
 def test_a_candidate_playbook_is_one_we_can_read(repo: Path):
-    # find_playbooks answers "which file could you mean", so every answer it gives
-    # has to survive being read for real.
+    # every candidate has to survive being read for real
     for candidate in find_playbooks(repo):
         again = read_playbook(repo, candidate.path.name)
 
@@ -66,12 +63,11 @@ def test_a_candidate_playbook_is_one_we_can_read(repo: Path):
 def test_group_vars_reach_the_hosts_ansible_puts_in_that_group(
     repo: Path, inventory_source: str | None, listed: Inventory
 ):
-    """The differential check: our file-to-group mapping against Ansible's merge.
+    """The differential check: the file-to-group mapping against Ansible's merge.
 
     A key set for a group must appear in every member host's merged vars. A higher
     precedence can change the value -- so only presence is asserted -- but nothing
-    removes the key. If we attributed a file to the wrong scope, this is where it
-    shows.
+    removes the key. A file attributed to the wrong scope shows up here.
     """
     # Only what Ansible was in a position to see: ansible-inventory reads the
     # group_vars beside the inventory, and not the ones beside a playbook.
@@ -83,10 +79,9 @@ def test_group_vars_reach_the_hosts_ansible_puts_in_that_group(
     if not beside:
         pytest.skip("no group_vars beside the inventory")
 
-    # A single file naming a group that does not exist is dead weight in his
-    # repository, not our defect. All of them failing to match is us reading the
-    # scope out of the wrong place -- and without this line that mistake turns the
-    # loop below into a silent skip, which is how it got past this test once.
+    # One file naming a group that does not exist is dead weight in the repository.
+    # All of them missing means the scope was read from the wrong place -- and without
+    # this line the loop below turns into a silent skip.
     known = [file for file in beside if file.scope in listed.groups]
     assert known, f"none of {len(beside)} group_vars files names a group Ansible knows"
 
