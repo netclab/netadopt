@@ -51,7 +51,7 @@ def test_every_playbook_is_either_read_or_reported(repo: Path):
         assert [play.index for play in read.plays] == list(range(len(read.plays))), path
 
 
-def test_a_candidate_playbook_is_one_we_can_read(repo: Path):
+def test_a_candidate_playbook_can_be_read(repo: Path):
     # every candidate has to survive being read for real
     for candidate in find_playbooks(repo):
         again = read_playbook(repo, candidate.path.name)

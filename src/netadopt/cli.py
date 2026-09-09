@@ -8,6 +8,7 @@ The default verb is the report.
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Annotated
 
@@ -16,6 +17,8 @@ import typer
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.playbook import Playbook, find_playbooks, read_playbook
+from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
+from netadopt.xr import fabric_inputs, to_yaml
 
 app = typer.Typer(
     help="Read a network-automation repository and report what is in it.",
@@ -23,45 +26,36 @@ app = typer.Typer(
     add_completion=False,
 )
 
+avd = typer.Typer(help="An Arista AVD repository.", no_args_is_help=True)
+app.add_typer(avd, name="avd")
 
-@app.callback()
-def _root() -> None:
-    """No options of its own, and load-bearing.
+Repo = Annotated[
+    Path,
+    typer.Argument(exists=True, file_okay=False, dir_okay=True, help="the repository directory"),
+]
+# One playbook is named; its plays are not -- a playbook can hold two plays with the
+# same name, as AVD's twodc scenario does.
+PlaybookOption = Annotated[
+    str | None, typer.Option(help="playbook to read, relative to the repository")
+]
+# Only needed when no ansible.cfg names it. Ansible's own -i, passed through
+# unchanged: a file, or a directory of them.
+InventoryOption = Annotated[
+    str | None, typer.Option(metavar="SOURCE", help="inventory file or directory, as -i")
+]
+AnsibleOption = Annotated[
+    str | None, typer.Option(metavar="EXE", help="ansible-playbook to use, overriding PATH")
+]
 
-    Without it typer collapses a one-command app into the root command: `netadopt avd`
-    would not exist until a second subcommand appeared.
-    """
 
-
-@app.command()
-def avd(
-    repo: Annotated[
-        Path,
-        typer.Argument(
-            exists=True,
-            file_okay=False,
-            dir_okay=True,
-            help="the repository directory",
-        ),
-    ],
-    # One playbook is named; its plays are not -- a playbook can hold two plays with
-    # the same name, as AVD's twodc scenario does.
-    playbook: Annotated[
-        str | None,
-        typer.Option(help="playbook to read, relative to the repository"),
-    ] = None,
-    # Only needed when no ansible.cfg names it. Ansible's own -i, passed through
-    # unchanged: a file, or a directory of them.
-    inventory: Annotated[
-        str | None,
-        typer.Option(metavar="SOURCE", help="inventory file or directory, as -i"),
-    ] = None,
-    ansible: Annotated[
-        str | None,
-        typer.Option(metavar="EXE", help="ansible-playbook to use, overriding PATH"),
-    ] = None,
+@avd.command()
+def report(
+    repo: Repo,
+    playbook: PlaybookOption = None,
+    inventory: InventoryOption = None,
+    ansible: AnsibleOption = None,
 ) -> None:
-    """Read an Arista AVD repository."""
+    """Say what is in the repository."""
     found = resolve_ansible(ansible)
     typer.echo(_ansible_report(found))
 
@@ -69,6 +63,8 @@ def avd(
     # inventory does not hide a readable playbook.
     listed = read_inventory(found, repo, inventory)
     typer.echo(_inventory_report(listed))
+
+    typer.echo(_vars_report(read_vars(repo, inventory, playbook), listed))
 
     if playbook is None:
         typer.echo(_candidates_report(repo))
@@ -81,6 +77,37 @@ def avd(
         raise typer.Exit(1)  # no Ansible
     if read is None or not read.usable or not listed.usable:
         raise typer.Exit(2)  # no playbook named, or it or the inventory did not read
+    raise typer.Exit(0)
+
+
+@avd.command()
+def emit(
+    repo: Repo,
+    playbook: PlaybookOption = None,
+    inventory: InventoryOption = None,
+) -> None:
+    """Write the FabricInput objects of the repository, as YAML.
+
+    The objects go to stdout and everything else to stderr, so the stream pipes into
+    `kubectl apply -f -` whether or not there was something to say.
+    """
+    found = read_vars(repo, inventory, playbook)
+    emitted = fabric_inputs(found)
+
+    if emitted.documents:
+        typer.echo(to_yaml(emitted.documents), nl=False)
+
+    for note in emitted.notes:
+        typer.echo(note, err=True)
+    if not emitted.documents:
+        typer.echo(f"nothing to emit: no group_vars or host_vars in {repo}", err=True)
+
+    # Fabric needs the inventory file verbatim and ansible.cfg, and neither is read
+    # yet, so what comes out here is the inputs and not the whole model.
+    typer.echo("note: Fabric is not emitted yet", err=True)
+
+    if found.problems:
+        raise typer.Exit(2)  # emitted, but a file that belongs in it did not read
     raise typer.Exit(0)
 
 
@@ -133,6 +160,37 @@ def _inventory_report(listed: Inventory) -> str:
     for warning in listed.warnings:
         lines.append(f"           {warning}")
     return "\n".join(lines)
+
+
+def _vars_report(found: VarFiles, listed: Inventory) -> str:
+    if not found.files:
+        where = ", ".join(str(path) for _, path in found.roots)
+        return f"vars       no group_vars or host_vars in {where}"
+
+    counted = Counter((file.root, file.vars_dir, file.scope) for file in found.files)
+    total = len(found.files)
+    groups = sum(1 for file in found.files if file.vars_dir == GROUP_VARS)
+    lines = [f"vars       {total} files  -- group_vars {groups}, host_vars {total - groups}"]
+
+    width = max(len(scope) for _, _, scope in counted)
+    for (root, vars_dir, scope), count in counted.items():
+        # Printed because Ansible allows a group and a host of the same name, at
+        # different precedence levels.
+        level = "group" if vars_dir == GROUP_VARS else "host"
+        # A scope Ansible does not know is a file that reaches no host -- a group
+        # renamed in the inventory, or a host_vars file for a host that is gone.
+        known = "" if _knows(listed, vars_dir, scope) else "  -- unknown to Ansible"
+        lines.append(f"           {root:9}  {level:5}  {scope:{width}}  {count}{known}")
+
+    for file in found.problems:
+        lines.append(f"           {file.path.name} {file.problem}")
+    return "\n".join(lines)
+
+
+def _knows(listed: Inventory, vars_dir: str, scope: str) -> bool:
+    if not listed.usable:  # nothing to check against, so nothing is flagged
+        return True
+    return scope in (listed.groups if vars_dir == GROUP_VARS else listed.hostvars)
 
 
 def _candidates_report(repo: Path) -> str:
