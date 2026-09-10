@@ -68,6 +68,7 @@ def find_ansible(exe: str | None = None) -> Ansible:
     try:
         done = subprocess.run(
             [found, "--version"],
+            check=False,
             capture_output=True,
             text=True,
             timeout=60,

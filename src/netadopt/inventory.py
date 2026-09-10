@@ -68,6 +68,7 @@ def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> I
     try:
         done = subprocess.run(
             command,
+            check=False,
             cwd=repo,
             capture_output=True,
             text=True,

@@ -85,6 +85,18 @@ def test_keys_are_folded_to_lower_case_as_ansible_folds_them(tmp_path: Path):
     assert read_ansible_cfg(tmp_path).sections == {"defaults": {"inventory": "inventory.yml"}}
 
 
+def test_the_inventory_it_names_is_split_on_commas_as_ansible_splits_it(tmp_path: Path):
+    write(tmp_path, "[defaults]\ninventory = inventory.yml, extra/ \n")
+
+    assert read_ansible_cfg(tmp_path).inventory == ("inventory.yml", "extra/")
+
+
+def test_no_inventory_named_is_none(tmp_path: Path):
+    write(tmp_path, "[defaults]\ngathering = explicit\n")
+
+    assert read_ansible_cfg(tmp_path).inventory == ()
+
+
 def test_no_file_is_no_problem(tmp_path: Path):
     found = read_ansible_cfg(tmp_path)
 

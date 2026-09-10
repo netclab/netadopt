@@ -1,6 +1,6 @@
-"""FabricInput objects, built from the vars files as read.
+"""Fabric and FabricInput objects, built from what was read.
 
-One object per scope, not per file: a `group_vars/FABRIC/` directory is several files
+One FabricInput per scope, not per file: a `group_vars/FABRIC/` directory is several files
 and one namespace, so its keys arrive in one `design`. `design` is the repository's
 own content -- transport keys included, nothing lifted out, nothing renamed.
 
@@ -23,6 +23,7 @@ import yaml
 from netadopt.varfiles import GROUP_VARS, VarFiles
 
 API_VERSION = "avd.netclab.dev/v1alpha1"
+FABRIC = "Fabric"
 FABRIC_INPUT = "FabricInput"
 
 # RFC 1123: lower case, digits and "-", starting and ending alphanumeric, 253 max.
@@ -33,6 +34,16 @@ _NOT_NAME = re.compile(r"[^a-z0-9-]+")
 class Emitted:
     documents: tuple[dict, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
+
+
+def fabric(name: str, play: dict, groups: dict, ansible_cfg: dict) -> dict:
+    """The Fabric object: one play, the inventory and ansible.cfg, each as written."""
+    return {
+        "apiVersion": API_VERSION,
+        "kind": FABRIC,
+        "metadata": {"name": rfc1123(name)},
+        "spec": {"play": play, "ansibleCfg": ansible_cfg, "groups": groups},
+    }
 
 
 def fabric_inputs(found: VarFiles) -> Emitted:

@@ -14,7 +14,15 @@ from netadopt.varfiles import (
     VarFile,
     VarFiles,
 )
-from netadopt.xr import API_VERSION, FABRIC_INPUT, fabric_inputs, rfc1123, to_yaml
+from netadopt.xr import (
+    API_VERSION,
+    FABRIC,
+    FABRIC_INPUT,
+    fabric,
+    fabric_inputs,
+    rfc1123,
+    to_yaml,
+)
 
 
 def one(
@@ -197,6 +205,21 @@ def test_the_stream_is_one_document_per_object_in_order():
     assert stream.startswith("---\n")
     assert all(doc["apiVersion"] == API_VERSION for doc in emitted.documents)
     assert all(doc["kind"] == FABRIC_INPUT for doc in emitted.documents)
+
+
+def test_a_fabric_carries_its_parts_verbatim_under_an_rfc_1123_name():
+    play = {"name": "Converge", "hosts": "TWODC_5STAGE_CLOS", "gather_facts": False}
+    groups = {"all": {"children": {"TWODC_5STAGE_CLOS": {"hosts": {"DC1.POD1.LEAF2A": None}}}}}
+    config = {"defaults": {"inventory": "inventory/"}}
+
+    document = fabric("eos_designs-twodc-5stage-clos", play, groups, config)
+
+    assert document == {
+        "apiVersion": API_VERSION,
+        "kind": FABRIC,
+        "metadata": {"name": "eos-designs-twodc-5stage-clos"},
+        "spec": {"play": play, "ansibleCfg": config, "groups": groups},
+    }
 
 
 def test_nothing_read_is_an_empty_stream_and_not_a_failure():

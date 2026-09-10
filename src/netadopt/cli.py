@@ -17,9 +17,10 @@ import typer
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
 from netadopt.inventory import Inventory, read_inventory
-from netadopt.playbook import Playbook, find_playbooks, read_playbook
+from netadopt.inventoryfile import read_inventory_file
+from netadopt.playbook import Play, Playbook, find_playbooks, read_playbook
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
-from netadopt.xr import fabric_inputs, to_yaml
+from netadopt.xr import fabric, fabric_inputs, rfc1123, to_yaml
 
 app = typer.Typer(
     help="Read a network-automation repository and report what is in it.",
@@ -47,6 +48,11 @@ InventoryOption = Annotated[
 AnsibleOption = Annotated[
     str | None, typer.Option(metavar="EXE", help="ansible-playbook to use, overriding PATH")
 ]
+# By position, as the report prints it.
+PlayOption = Annotated[int, typer.Option(metavar="N", help="play to carry, by its index")]
+NameOption = Annotated[
+    str | None, typer.Option(help="the Fabric's name; default the repository directory's")
+]
 
 
 @avd.command()
@@ -68,7 +74,8 @@ def report(
     listed = read_inventory(found, repo, inventory)
     typer.echo(_inventory_report(listed))
 
-    typer.echo(_vars_report(read_vars(repo, inventory, playbook), listed))
+    source = _inventory_source(inventory, config)
+    typer.echo(_vars_report(read_vars(repo, source, playbook), listed))
 
     if playbook is None:
         typer.echo(_candidates_report(repo))
@@ -89,31 +96,86 @@ def emit(
     repo: Repo,
     playbook: PlaybookOption = None,
     inventory: InventoryOption = None,
+    play: PlayOption = 0,
+    name: NameOption = None,
 ) -> None:
-    """Write the FabricInput objects of the repository, as YAML.
+    """Write the Fabric and FabricInput objects of the repository, as YAML.
 
     The objects go to stdout and everything else to stderr, so the stream pipes into
     `kubectl apply -f -` whether or not there was something to say.
     """
-    found = read_vars(repo, inventory, playbook)
-    emitted = fabric_inputs(found)
+    config = read_ansible_cfg(repo)
+    source = _inventory_source(inventory, config)
+    found = read_vars(repo, source, playbook)
+    inputs = fabric_inputs(found)
+    document, said = _fabric(repo, playbook, source, play, name, config)
 
-    if emitted.documents:
-        typer.echo(to_yaml(emitted.documents), nl=False)
+    documents = ((document,) if document else ()) + inputs.documents
+    if documents:
+        typer.echo(to_yaml(documents), nl=False)
 
-    for note in emitted.notes:
-        typer.echo(note, err=True)
-    if not emitted.documents:
-        typer.echo(f"nothing to emit: no group_vars or host_vars in {repo}", err=True)
+    for line in (*said, *inputs.notes):
+        typer.echo(line, err=True)
+    if not inputs.documents:
+        typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
-    # Fabric's parts are read -- the play, the inventory file, ansible.cfg -- and
-    # nothing assembles them yet, so what comes out here is the inputs and not the
-    # whole model.
-    typer.echo("note: Fabric is not emitted yet", err=True)
-
-    if found.problems:
-        raise typer.Exit(2)  # emitted, but a file that belongs in it did not read
+    if document is None or found.problems:
+        raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
+
+
+def _fabric(
+    repo: Path,
+    playbook: str | None,
+    source: str | None,
+    index: int,
+    name: str | None,
+    config: AnsibleCfg,
+) -> tuple[dict | None, list[str]]:
+    """The Fabric document, or None; and the lines that say what became of it."""
+    if playbook is None:
+        return None, ["Fabric not emitted: no playbook named -- pass --playbook"]
+    read = read_playbook(repo, playbook)
+    if not read.usable:
+        return None, [f"Fabric not emitted: {read.problem}"]
+    if not 0 <= index < len(read.plays):
+        held = len(read.plays)
+        return None, [f"Fabric not emitted: no play [{index}] -- {read.path.name} holds {held}"]
+    if not config.usable:
+        return None, [f"Fabric not emitted: {config.problem}"]
+    written = read_inventory_file(repo, source)
+    if not written.usable:
+        return None, [f"Fabric not emitted: {written.problem}"]
+
+    wanted = name or repo.resolve().name
+    spelled = rfc1123(wanted)
+    if not spelled:
+        return None, [f"Fabric not emitted: no name can be spelled from {wanted!r} -- pass --name"]
+
+    chosen = read.plays[index]
+    said = [f"Fabric {spelled} <- {_label(chosen)}"]
+    if name and spelled != name:
+        said.append(f"--name {name} is spelled {spelled}")
+    # Another play is another run, and it needs its own --name: under the same one it
+    # would replace this Fabric in the cluster.
+    said += [
+        f"{_label(other)}: not carried -- carry it with --play {other.index} and its own --name"
+        for other in read.plays
+        if other is not chosen
+    ]
+    return fabric(spelled, chosen.raw, written.groups, config.sections), said
+
+
+def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:
+    """The -i argument: as given, or the one inventory ansible.cfg names."""
+    if given:
+        return given
+    named = config.inventory
+    return named[0] if len(named) == 1 else None
+
+
+def _label(play: Play) -> str:
+    return f"play [{play.index}] {play.name}" if play.name else f"play [{play.index}]"
 
 
 def _ansible_report(found: Ansible) -> str:
@@ -158,8 +220,8 @@ def _playbook_report(read: Playbook) -> str:
     for play in plays:
         vars_seen = f"  vars {len(play.var_names)}" if play.var_names else ""
         lines.append(
-            f"  [{play.index}] {str(play.name):{width}}"
-            f"  hosts {str(play.hosts):{hosts_width}}"
+            f"  [{play.index}] {play.name!s:{width}}"
+            f"  hosts {play.hosts!s:{hosts_width}}"
             f"  tasks {play.task_count}{vars_seen}"
         )
         # how the role is pulled in, printed: three different precedences
