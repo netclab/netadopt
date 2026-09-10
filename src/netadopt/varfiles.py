@@ -1,6 +1,6 @@
 """group_vars and host_vars, as files.
 
-This is the one thing Ansible will not tell us. `ansible-inventory --list` flattens
+This is the one thing Ansible does not say. `ansible-inventory --list` flattens
 everything into per-host values -- measured: a group node comes back carrying only
 `children` or `hosts`, and even a `vars:` block written inside the inventory file
 arrives merged into every host. What is wanted here is the input to that merge, per

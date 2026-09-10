@@ -10,6 +10,11 @@ Properties only, no counts -- a count goes red on somebody else's release.
 
 A checkout is named by an environment variable and these tests skip without one; the
 path is somebody's laptop, so it is not written down here.
+
+A molecule scenario says in molecule.yml how ansible-playbook runs it, and that is
+read rather than guessed from the directories: the -i it passes, and whether its
+inventory or playbook lives in another directory. A scenario that borrows one is a
+wrapper around a repository tested elsewhere, and is skipped with the reason.
 """
 
 from __future__ import annotations
@@ -18,8 +23,10 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 AVD_ENV = "NETADOPT_AVD"
+MOLECULE_FILE = "molecule.yml"
 
 # Where the collection sits inside a clone of aristanetworks/avd. A path pointing
 # straight at the collection works too, so either can be exported.
@@ -48,6 +55,34 @@ def _repos() -> list[tuple[str, Path]]:
     return _avd_repos()
 
 
+def _molecule(path: Path) -> dict[str, str | None]:
+    """The -i molecule passes to ansible-playbook, and its converge playbook."""
+    file = path / MOLECULE_FILE
+    try:
+        data = yaml.safe_load(file.read_text(encoding="utf-8")) if file.is_file() else None
+    except yaml.YAMLError:
+        data = None
+    if not isinstance(data, dict):
+        return {}
+
+    # `ansible:` in current molecule, `provisioner:` in older files
+    ansible = data.get("ansible") or data.get("provisioner") or {}
+    args = ((ansible.get("executor") or {}).get("args") or {}).get("ansible_playbook") or []
+    inventory = next(
+        (arg.split("=", 1)[1] for arg in args if isinstance(arg, str) and arg.startswith("--inventory=")),
+        None,
+    )
+    return {"inventory": inventory, "converge": (ansible.get("playbooks") or {}).get("converge")}
+
+
+def _borrowed(path: Path) -> str | None:
+    """Why a scenario has no repository of its own to read, or None."""
+    for what, value in _molecule(path).items():
+        if isinstance(value, str) and ".." in Path(value).parts:
+            return f"molecule runs it with the {what} {value}"
+    return None
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     if "repo" not in metafunc.fixturenames:
         return
@@ -62,16 +97,23 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
 
     # The corpus tags the id, so a second ecosystem cannot collide with a scenario
     # name from the first.
-    metafunc.parametrize(
-        "repo",
-        [path for _, path in repos],
-        ids=[f"{corpus}/{path.name}" for corpus, path in repos],
-    )
+    params = []
+    for corpus, path in repos:
+        reason = _borrowed(path)
+        marks = [pytest.mark.skip(reason=reason)] if reason else []
+        params.append(pytest.param(path, marks=marks, id=f"{corpus}/{path.name}"))
+    metafunc.parametrize("repo", params)
 
 
 @pytest.fixture
 def inventory_source(repo: Path) -> str | None:
-    """The -i argument, as the repository states it: a directory, a file, or nothing."""
+    """The -i argument, as the repository states it: molecule's, a directory, a file, or nothing.
+
+    molecule's comes first: a scenario can keep generated files under inventory/, and
+    only the -i it really passes keeps them out.
+    """
+    if told := _molecule(repo).get("inventory"):
+        return told
     if (repo / "inventory").is_dir():
         return "inventory/"
     if (repo / "inventory.yml").is_file():

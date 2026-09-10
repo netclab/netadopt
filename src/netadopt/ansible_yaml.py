@@ -1,8 +1,8 @@
-"""Reading YAML the way Ansible reads it.
+"""Reading and writing YAML the way Ansible does.
 
 `!vault` and `!unsafe` are Ansible's, and `yaml.safe_load` raises on both. Here they
 become the shapes `ansible-inventory --list` prints: {"__ansible_vault": ...} and
-{"__ansible_unsafe": ...}.
+{"__ansible_unsafe": ...}. `dump` writes those shapes back as the tags.
 
 Any other tag still raises, with its name and the line it is on.
 """
@@ -45,3 +45,36 @@ def load(text: str, path: Path | str | None = None) -> object:
         # "<unicode string>".
         stream.name = str(path)
     return yaml.load(stream, AnsibleLoader)
+
+
+class AnsibleDumper(yaml.SafeDumper):
+    """SafeDumper writing the two shapes `load` makes back as Ansible's tags."""
+
+    def ignore_aliases(self, data: object) -> bool:
+        # an object met twice is written twice, never as &anchor and *alias
+        return True
+
+
+def _mapping(dumper: AnsibleDumper, data: dict) -> yaml.Node:
+    if len(data) == 1:
+        ((key, value),) = data.items()
+        if key == VAULT_KEY and isinstance(value, str):
+            return dumper.represent_scalar("!vault", value, style="|")
+        if key == UNSAFE_KEY and isinstance(value, str):
+            return dumper.represent_scalar("!unsafe", value)
+    return dumper.represent_dict(data)
+
+
+AnsibleDumper.add_representer(dict, _mapping)
+
+
+def dump(data: object) -> str:
+    """One document, keys in their own order, long strings never folded."""
+    return yaml.dump(
+        data,
+        Dumper=AnsibleDumper,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+        width=float("inf"),
+    )
