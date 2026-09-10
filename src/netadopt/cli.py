@@ -15,6 +15,7 @@ from typing import Annotated
 import typer
 
 from netadopt.ansible import Ansible, resolve_ansible
+from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.playbook import Playbook, find_playbooks, read_playbook
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
@@ -61,6 +62,9 @@ def report(
 
     # Every part is reported before anything decides the run failed: an unreadable
     # inventory does not hide a readable playbook.
+    config = read_ansible_cfg(repo)
+    typer.echo(_config_report(config, repo))
+
     listed = read_inventory(found, repo, inventory)
     typer.echo(_inventory_report(listed))
 
@@ -75,8 +79,8 @@ def report(
 
     if not found.usable:
         raise typer.Exit(1)  # no Ansible
-    if read is None or not read.usable or not listed.usable:
-        raise typer.Exit(2)  # no playbook named, or it or the inventory did not read
+    if read is None or not read.usable or not listed.usable or not config.usable:
+        raise typer.Exit(2)  # no playbook named, or it, the inventory or ansible.cfg did not read
     raise typer.Exit(0)
 
 
@@ -102,8 +106,9 @@ def emit(
     if not emitted.documents:
         typer.echo(f"nothing to emit: no group_vars or host_vars in {repo}", err=True)
 
-    # Fabric needs the inventory file verbatim and ansible.cfg, and neither is read
-    # yet, so what comes out here is the inputs and not the whole model.
+    # Fabric's parts are read -- the play, the inventory file, ansible.cfg -- and
+    # nothing assembles them yet, so what comes out here is the inputs and not the
+    # whole model.
     typer.echo("note: Fabric is not emitted yet", err=True)
 
     if found.problems:
@@ -125,6 +130,20 @@ def _ansible_report(found: Ansible) -> str:
         )
     for path in found.collections:
         lines.append(f"           collections {path}")
+    return "\n".join(lines)
+
+
+def _config_report(config: AnsibleCfg, repo: Path) -> str:
+    if config.path is None:
+        return f"config     no ansible.cfg in {repo}"
+    if not config.usable:
+        return f"config     {config.problem}"
+
+    count = len(config.sections)
+    lines = [f"config     {config.path.name}  -- {count} section{'s'[: count != 1]}"]
+    # Key names only: a value can be a token, as under [galaxy_server.*].
+    for name, values in config.sections.items():
+        lines.append(f"           [{name}] {', '.join(values)}")
     return "\n".join(lines)
 
 

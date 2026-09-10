@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from netadopt.ansible import Ansible, resolve_ansible
+from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.playbook import find_playbooks, read_playbook
 from netadopt.varfiles import GROUP_VARS, INVENTORY_ROOT, read_vars
@@ -40,6 +41,14 @@ def test_every_vars_file_is_either_read_or_reported(repo: Path, inventory_source
 
     for file in found.files:
         assert (file.data is None) != (file.problem is None), file.path
+
+
+def test_an_ansible_cfg_ansible_runs_with_can_be_read(repo: Path):
+    # These repositories are run by their own CI, so Ansible accepts every
+    # ansible.cfg in them, and a parser that is Ansible's has to as well.
+    found = read_ansible_cfg(repo)
+
+    assert found.usable, found.problem
 
 
 def test_every_playbook_is_either_read_or_reported(repo: Path):
