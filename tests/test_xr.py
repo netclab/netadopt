@@ -18,11 +18,15 @@ from netadopt.xr import (
     API_VERSION,
     FABRIC,
     FABRIC_INPUT,
+    FABRIC_LABEL,
+    NAME_MAX,
     fabric,
     fabric_inputs,
     rfc1123,
     to_yaml,
 )
+
+NAME = "lab"
 
 
 def one(
@@ -53,7 +57,7 @@ def test_a_group_vars_directory_becomes_one_object():
         )
     )
 
-    emitted = fabric_inputs(found)
+    emitted = fabric_inputs(found, NAME)
 
     assert len(emitted.documents) == 1
     assert emitted.documents[0]["spec"]["design"] == {
@@ -67,7 +71,7 @@ def test_transport_keys_travel_like_any_other_key():
     # list is a place to hide things.
     found = VarFiles(files=(one("FABRIC.yml", "FABRIC", {"ansible_user": "arista"}),))
 
-    design = fabric_inputs(found).documents[0]["spec"]["design"]
+    design = fabric_inputs(found, NAME).documents[0]["spec"]["design"]
 
     assert design == {"ansible_user": "arista"}
 
@@ -80,7 +84,7 @@ def test_a_key_written_twice_in_one_scope_is_noted():
         )
     )
 
-    emitted = fabric_inputs(found)
+    emitted = fabric_inputs(found, NAME)
 
     assert emitted.documents[0]["spec"]["design"] == {"mtu": 9000}  # file order decides
     assert any("mtu" in note for note in emitted.notes)
@@ -89,9 +93,9 @@ def test_a_key_written_twice_in_one_scope_is_noted():
 def test_a_host_vars_file_applies_to_the_host_and_says_so_in_its_name():
     found = VarFiles(files=(one("dc1-spine1.yml", "dc1-spine1", {"a": 1}, vars_dir=HOST_VARS),))
 
-    document = fabric_inputs(found).documents[0]
+    document = fabric_inputs(found, NAME).documents[0]
 
-    assert document["metadata"]["name"] == "host-dc1-spine1"
+    assert document["metadata"]["name"] == "lab-host-dc1-spine1"
     assert document["spec"]["appliesTo"] == {"hosts": ["dc1-spine1"]}
 
 
@@ -100,16 +104,47 @@ def test_the_name_is_rfc_1123_while_the_spec_keeps_his_spelling():
     # examples write hostnames entirely in capitals.
     found = VarFiles(files=(one("DC1_SPINES.yml", "DC1_SPINES", {"type": "spine"}),))
 
-    document = fabric_inputs(found).documents[0]
+    document = fabric_inputs(found, NAME).documents[0]
 
-    assert document["metadata"]["name"] == "dc1-spines"
+    assert document["metadata"]["name"] == "lab-dc1-spines"
     assert document["spec"]["appliesTo"]["group"] == "DC1_SPINES"
 
 
 def test_rfc_1123_survives_dots_capitals_and_edges():
     assert rfc1123("DC1.POD1.LEAF2A") == "dc1-pod1-leaf2a"
     assert rfc1123("_FABRIC_") == "fabric"
-    assert rfc1123("A" * 300) == "a" * 253
+    assert rfc1123("A" * 300) == "a" * 300
+
+
+def test_a_name_too_long_for_kubernetes_is_refused_and_not_cut():
+    long = "G" * (NAME_MAX - len("lab-") + 1)
+    found = VarFiles(
+        files=(
+            one(f"{long}.yml", long, {"a": 1}),
+            one("FABRIC.yml", "FABRIC", {"b": 2}),
+        )
+    )
+
+    emitted = fabric_inputs(found, NAME)
+
+    assert [doc["metadata"]["name"] for doc in emitted.documents] == ["lab-fabric"]
+    assert len(emitted.problems) == 1
+    assert long in emitted.problems[0] and str(NAME_MAX) in emitted.problems[0]
+
+
+def test_a_suffix_that_makes_a_name_too_long_is_refused_too():
+    edge = "g" * (NAME_MAX - len("lab-"))
+    found = VarFiles(
+        files=(
+            one("a.yml", edge, {"a": 1}),
+            one("a.yml", edge, {"b": 2}, root=PLAYBOOK_ROOT),
+        )
+    )
+
+    emitted = fabric_inputs(found, NAME)
+
+    assert [len(doc["metadata"]["name"]) for doc in emitted.documents] == [NAME_MAX]
+    assert len(emitted.problems) == 1
 
 
 def test_a_file_that_did_not_read_is_not_emitted_and_is_named():
@@ -120,9 +155,9 @@ def test_a_file_that_did_not_read_is_not_emitted_and_is_named():
         )
     )
 
-    emitted = fabric_inputs(found)
+    emitted = fabric_inputs(found, NAME)
 
-    assert [doc["metadata"]["name"] for doc in emitted.documents] == ["fabric"]
+    assert [doc["metadata"]["name"] for doc in emitted.documents] == ["lab-fabric"]
     assert any("SECRET.yml" in note for note in emitted.notes)
 
 
@@ -136,7 +171,7 @@ def test_every_object_says_which_root_its_files_sat_in():
         )
     )
 
-    emitted = fabric_inputs(found)
+    emitted = fabric_inputs(found, NAME)
 
     assert [doc["spec"]["beside"] for doc in emitted.documents] == ["inventory", "playbook"]
 
@@ -151,11 +186,11 @@ def test_one_scope_under_both_roots_stays_two_objects():
         )
     )
 
-    emitted = fabric_inputs(found)
+    emitted = fabric_inputs(found, NAME)
 
     assert [doc["metadata"]["name"] for doc in emitted.documents] == [
-        "fabric",
-        "fabric-playbook",
+        "lab-fabric",
+        "lab-fabric-playbook",
     ]
     assert [doc["spec"]["design"] for doc in emitted.documents] == [{"a": 1}, {"a": 2}]
 
@@ -171,9 +206,9 @@ def test_no_two_objects_share_a_name_even_when_the_suffix_is_taken():
         )
     )
 
-    names = [doc["metadata"]["name"] for doc in fabric_inputs(found).documents]
+    names = [doc["metadata"]["name"] for doc in fabric_inputs(found, NAME).documents]
 
-    assert names == ["fabric", "fabric-playbook", "fabric-playbook-2"]
+    assert names == ["lab-fabric", "lab-fabric-playbook", "lab-fabric-playbook-2"]
     assert len(set(names)) == len(names)
 
 
@@ -185,9 +220,27 @@ def test_a_group_and_a_host_of_one_name_are_two_objects():
         )
     )
 
-    names = [doc["metadata"]["name"] for doc in fabric_inputs(found).documents]
+    names = [doc["metadata"]["name"] for doc in fabric_inputs(found, NAME).documents]
 
-    assert names == ["dc1", "host-dc1"]  # the prefix keeps them apart on its own
+    assert names == ["lab-dc1", "lab-host-dc1"]  # the prefix keeps them apart on its own
+
+
+def test_two_fabrics_give_one_group_two_objects_each_labelled_with_its_own():
+    # FABRIC is a group in almost every repository; two in one namespace must not
+    # overwrite each other or take each other's inputs.
+    found = VarFiles(files=(one("FABRIC.yml", "FABRIC", {"a": 1}),))
+
+    first = fabric_inputs(found, "single-dc-l3ls").documents[0]["metadata"]
+    second = fabric_inputs(found, "dual-dc-l3ls").documents[0]["metadata"]
+
+    assert first == {
+        "name": "single-dc-l3ls-fabric",
+        "labels": {FABRIC_LABEL: "single-dc-l3ls"},
+    }
+    assert second == {
+        "name": "dual-dc-l3ls-fabric",
+        "labels": {FABRIC_LABEL: "dual-dc-l3ls"},
+    }
 
 
 def test_the_stream_is_one_document_per_object_in_order():
@@ -197,7 +250,7 @@ def test_the_stream_is_one_document_per_object_in_order():
             one("DC1.yml", "DC1", {"mgmt_gateway": "172.16.1.1"}),
         )
     )
-    emitted = fabric_inputs(found)
+    emitted = fabric_inputs(found, NAME)
 
     stream = to_yaml(emitted.documents)
 
@@ -207,23 +260,37 @@ def test_the_stream_is_one_document_per_object_in_order():
     assert all(doc["kind"] == FABRIC_INPUT for doc in emitted.documents)
 
 
-def test_a_fabric_carries_its_parts_verbatim_under_an_rfc_1123_name():
+def test_a_fabric_carries_its_parts_verbatim_and_selects_its_inputs_by_label():
     play = {"name": "Converge", "hosts": "TWODC_5STAGE_CLOS", "gather_facts": False}
     groups = {"all": {"children": {"TWODC_5STAGE_CLOS": {"hosts": {"DC1.POD1.LEAF2A": None}}}}}
     config = {"defaults": {"inventory": "inventory/"}}
 
-    document = fabric("eos_designs-twodc-5stage-clos", play, groups, config)
+    document = fabric("eos-designs-twodc-5stage-clos", play, groups, config)
 
     assert document == {
         "apiVersion": API_VERSION,
         "kind": FABRIC,
         "metadata": {"name": "eos-designs-twodc-5stage-clos"},
-        "spec": {"play": play, "ansibleCfg": config, "groups": groups},
+        "spec": {
+            "inputs": {"matchLabels": {FABRIC_LABEL: "eos-designs-twodc-5stage-clos"}},
+            "play": play,
+            "ansibleCfg": config,
+            "groups": groups,
+        },
     }
 
 
+def test_the_label_a_fabric_selects_is_the_one_its_inputs_carry():
+    found = VarFiles(files=(one("FABRIC.yml", "FABRIC", {"a": 1}),))
+
+    selector = fabric(NAME, {}, {}, {})["spec"]["inputs"]["matchLabels"]
+    labels = fabric_inputs(found, NAME).documents[0]["metadata"]["labels"]
+
+    assert selector.items() <= labels.items()
+
+
 def test_nothing_read_is_an_empty_stream_and_not_a_failure():
-    emitted = fabric_inputs(VarFiles())
+    emitted = fabric_inputs(VarFiles(), NAME)
 
     assert emitted.documents == ()
     assert to_yaml(emitted.documents) == ""

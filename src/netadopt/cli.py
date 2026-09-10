@@ -20,7 +20,7 @@ from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import Play, Playbook, find_playbooks, read_playbook
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
-from netadopt.xr import fabric, fabric_inputs, rfc1123, to_yaml
+from netadopt.xr import LABEL_MAX, fabric, fabric_inputs, rfc1123, to_yaml
 
 app = typer.Typer(
     help="Read a network-automation repository and report what is in it.",
@@ -104,22 +104,38 @@ def emit(
     The objects go to stdout and everything else to stderr, so the stream pipes into
     `kubectl apply -f -` whether or not there was something to say.
     """
+    wanted = name or repo.resolve().name
+    spelled = rfc1123(wanted)
+    if not spelled:
+        typer.echo(f"nothing emitted: no name can be spelled from {wanted!r} -- pass --name", err=True)
+        raise typer.Exit(2)
+    if len(spelled) > LABEL_MAX:
+        # the name is also the value of the label a Fabric selects its inputs by
+        typer.echo(
+            f"nothing emitted: {spelled} is {len(spelled)} characters, a label value "
+            f"holds {LABEL_MAX} -- pass a shorter --name",
+            err=True,
+        )
+        raise typer.Exit(2)
+
     config = read_ansible_cfg(repo)
     source = _inventory_source(inventory, config)
     found = read_vars(repo, source, playbook)
-    inputs = fabric_inputs(found)
-    document, said = _fabric(repo, playbook, source, play, name, config)
+    inputs = fabric_inputs(found, spelled)
+    document, said = _fabric(repo, playbook, source, play, spelled, config)
+    if name and spelled != name:
+        said.insert(0, f"--name {name} is spelled {spelled}")
 
     documents = ((document,) if document else ()) + inputs.documents
     if documents:
         typer.echo(to_yaml(documents), nl=False)
 
-    for line in (*said, *inputs.notes):
+    for line in (*said, *inputs.notes, *inputs.problems):
         typer.echo(line, err=True)
     if not inputs.documents:
         typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
-    if document is None or found.problems:
+    if document is None or found.problems or inputs.problems:
         raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
 
@@ -129,10 +145,10 @@ def _fabric(
     playbook: str | None,
     source: str | None,
     index: int,
-    name: str | None,
+    name: str,
     config: AnsibleCfg,
 ) -> tuple[dict | None, list[str]]:
-    """The Fabric document, or None; and the lines that say what became of it."""
+    """The Fabric document named `name`, or None; and the lines saying what became of it."""
     if playbook is None:
         return None, ["Fabric not emitted: no playbook named -- pass --playbook"]
     read = read_playbook(repo, playbook)
@@ -147,15 +163,8 @@ def _fabric(
     if not written.usable:
         return None, [f"Fabric not emitted: {written.problem}"]
 
-    wanted = name or repo.resolve().name
-    spelled = rfc1123(wanted)
-    if not spelled:
-        return None, [f"Fabric not emitted: no name can be spelled from {wanted!r} -- pass --name"]
-
     chosen = read.plays[index]
-    said = [f"Fabric {spelled} <- {_label(chosen)}"]
-    if name and spelled != name:
-        said.append(f"--name {name} is spelled {spelled}")
+    said = [f"Fabric {name} <- {_label(chosen)}"]
     # Another play is another run, and it needs its own --name: under the same one it
     # would replace this Fabric in the cluster.
     said += [
@@ -163,7 +172,7 @@ def _fabric(
         for other in read.plays
         if other is not chosen
     ]
-    return fabric(spelled, chosen.raw, written.groups, config.sections), said
+    return fabric(name, chosen.raw, written.groups, config.sections), said
 
 
 def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:
