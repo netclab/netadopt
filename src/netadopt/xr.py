@@ -21,10 +21,13 @@ precedence levels, so they stay in different objects and never merge here.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 
 import yaml
 
+from netadopt.pools import PoolFile
 from netadopt.varfiles import GROUP_VARS, VarFiles
 
 API_VERSION = "avd.netclab.dev/v1alpha1"
@@ -65,6 +68,10 @@ PASSWORD_VARS = frozenset(
 # RFC 1123: lower case, digits and "-", starting and ending alphanumeric.
 _NOT_NAME = re.compile(r"[^a-z0-9-]+")
 
+CONFIG_MAP = "ConfigMap"
+# What a ConfigMap key may hold.
+_NOT_KEY = re.compile(r"[^-._a-zA-Z0-9]+")
+
 
 @dataclass(frozen=True)
 class Emitted:
@@ -74,20 +81,28 @@ class Emitted:
 
 
 def fabric(
-    name: str, play: dict, groups: dict, ansible_cfg: dict, vault_password: bool = False
+    name: str,
+    play: dict,
+    groups: dict,
+    ansible_cfg: dict,
+    vault_password: bool = False,
+    pools: list[dict] | None = None,
 ) -> dict:
     """The Fabric object: one play, the inventory and ansible.cfg, each as written.
 
     `name` is already a Kubernetes name, and the FabricInputs emitted with it carry it
     in the label `spec.inputs` selects. `vault_password` is set when ansible.cfg names
     a vault password file: the password is never carried, and `spec.vaultPassword`
-    names the Secret holding it, in the Fabric's own namespace.
+    names the Secret holding it, in the Fabric's own namespace. `pools` are the
+    entries `pool_objects` makes.
     """
     spec: dict = {"inputs": {"matchLabels": {FABRIC_LABEL: name}}}
     if vault_password:
         spec["vaultPassword"] = {
             "secretRef": {"name": vault_secret(name), "key": VAULT_SECRET_KEY}
         }
+    if pools:
+        spec["pools"] = pools
     spec |= {"play": play, "ansibleCfg": ansible_cfg, "groups": groups}
     return {"apiVersion": API_VERSION, "kind": FABRIC, "metadata": {"name": name}, "spec": spec}
 
@@ -95,6 +110,35 @@ def fabric(
 def vault_secret(fabric_name: str) -> str:
     """The name of the Secret a Fabric's vault password is kept in."""
     return f"{fabric_name}-vault"
+
+
+def pool_objects(fabric_name: str, files: Iterable[PoolFile]) -> tuple[list[dict], dict | None]:
+    """`spec.pools`, and the ConfigMap it names: every pool file, one key each.
+
+    The key is the file's name, and the entry says where the file goes back: a
+    ConfigMap key cannot hold a "/".
+    """
+    name = f"{fabric_name}-pools"
+    entries: list[dict] = []
+    data: dict[str, str] = {}
+    for file in files:
+        base = _NOT_KEY.sub("-", PurePosixPath(file.path).name)
+        key, number = base, 2
+        while key in data:
+            key, number = f"{number}-{base}", number + 1
+        data[key] = file.text
+        entries.append(
+            {"configMapRef": {"name": name, "key": key}, "path": file.path, "beside": file.beside}
+        )
+    if not entries:
+        return [], None
+    config_map = {
+        "apiVersion": "v1",
+        "kind": CONFIG_MAP,
+        "metadata": {"name": name, "labels": {FABRIC_LABEL: fabric_name}},
+        "data": data,
+    }
+    return entries, config_map
 
 
 def plain_passwords(documents: tuple[dict, ...]) -> list[tuple[str, list[str]]]:

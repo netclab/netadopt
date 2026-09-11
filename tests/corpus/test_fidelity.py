@@ -17,6 +17,9 @@ from netadopt.reconstruct import Reconstructed
 
 MISSING = object()
 
+# How `resolve` writes the repository's own directory.
+ROOT = "<root>"
+
 # `ansible_inventory_sources` is where the inventory was read from, not what it says:
 # repo' has one file where the source may name a directory. `vars` holds every var once
 # more, and each is compared on its own.
@@ -34,6 +37,7 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
     reconstructed: Reconstructed,
     rebuilt_env: dict[str, str],
     resolve,
+    pool_file,
     tmp_path: Path,
 ):
     # A copy, so that the oracle's playbook is never written into the checkout.
@@ -56,6 +60,20 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
             if a.get(key, MISSING) != b.get(key, MISSING):
                 differing.setdefault(key, []).append(host)
     assert not differing, {key: f"{hosts[0]} and {len(hosts) - 1} more" for key, hosts in differing.items()}
+
+    # A file read beside the vars, not through them, is judged by its bytes: the pool
+    # file, where each side's own resolved vars say it is.
+    pairs = {(pool_file(want), pool_file(got.hosts[host])) for host, want in expected.hosts.items()}
+    for mine, theirs in sorted(pair for pair in pairs if pair[0] is not None):
+        assert _bytes(source, mine) == _bytes(reconstructed.root, theirs), mine
+
+
+def _bytes(root: Path, path: str | None) -> bytes | None:
+    """The file at `path` -- `<root>/...`, or relative to where Ansible ran -- or None."""
+    if path is None:
+        return None
+    file = root / path.removeprefix(ROOT + "/") if path.startswith(ROOT + "/") else root / path
+    return file.read_bytes() if file.is_file() else None
 
 
 def _comparable(hostvars: dict) -> dict:

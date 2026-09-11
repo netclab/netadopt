@@ -208,6 +208,29 @@ def rebuilt_env(repo: Path, reconstructed: Reconstructed, tmp_path: Path) -> dic
     return {"ANSIBLE_VAULT_PASSWORD_FILE": str(password)}
 
 
+@pytest.fixture
+def pool_file() -> Callable[[dict], str | None]:
+    """Where AVD's pool manager keeps a host's node IDs, by the host's resolved vars.
+
+    pyavd's own rule (`node_id_pools.py`): `pools_file` as given, else
+    `<output_dir>/data/<fabric_name>-ids.yml`, output_dir being the role's
+    `{{ root_dir }}/{{ output_dir_name }}` and root_dir the inventory's directory.
+    """
+
+    def where(hostvars: dict) -> str | None:
+        numbering = hostvars.get("fabric_numbering") or {}
+        node_id = (numbering.get("node_id") or {}) if isinstance(numbering, dict) else {}
+        if node_id.get("algorithm") != "pool_manager":
+            return None
+        if node_id.get("pools_file"):
+            return str(node_id["pools_file"])
+        root_dir = hostvars.get("root_dir") or hostvars.get("inventory_dir")
+        output_dir = hostvars.get("output_dir") or f"{root_dir}/{hostvars.get('output_dir_name') or 'intended'}"
+        return f"{output_dir}/data/{hostvars.get('fabric_name')}-ids.yml"
+
+    return where
+
+
 # The task AVD writes every host's resolved vars from, as templated/<host>.json.
 ORACLE_TASK = "arista.avd.validate_inputs"
 ORACLE_PLAYBOOK = "netadopt-oracle.yml"

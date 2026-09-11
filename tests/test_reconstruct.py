@@ -15,9 +15,10 @@ from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import read_playbook
+from netadopt.pools import PoolFile
 from netadopt.reconstruct import SecretRef, reconstruct
 from netadopt.varfiles import read_vars
-from netadopt.xr import API_VERSION, FABRIC_INPUT, FABRIC_LABEL, fabric
+from netadopt.xr import API_VERSION, FABRIC_INPUT, FABRIC_LABEL, fabric, pool_objects
 
 PLAY = {"name": "Build", "hosts": "FABRIC", "gather_facts": False, "tasks": []}
 GROUPS = {"all": {"children": {"FABRIC": {"hosts": {"dc1-spine1": {"ansible_host": "10.0.0.1"}}}}}}
@@ -202,6 +203,38 @@ def test_a_secret_named_with_no_vault_password_file_writes_nothing(tmp_path: Pat
 
     assert not built.usable
     assert "names no vault password file" in built.problem
+
+
+def pooled(path: str = "intended/data/ids.yml", beside: str = "playbook") -> tuple[list[dict], dict]:
+    return pool_objects("lab", [PoolFile(path=path, beside=beside, text="node_id_pools: {}\n")])
+
+
+def test_a_pool_file_goes_back_where_the_fabric_names_it(tmp_path: Path):
+    entries, config_map = pooled()
+
+    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo")
+
+    assert built.usable, built.problem
+    assert (built.root / "intended/data/ids.yml").read_text() == "node_id_pools: {}\n"
+
+
+def test_a_pool_beside_the_inventory_follows_the_inventory(tmp_path: Path):
+    entries, config_map = pooled(beside="inventory")
+
+    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo")
+
+    assert built.usable, built.problem
+    assert "inventory/intended/data/ids.yml" in built.files
+
+
+def test_a_pool_whose_config_map_is_missing_writes_nothing(tmp_path: Path):
+    entries, _ = pooled()
+
+    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, pools=entries)], tmp_path / "repo")
+
+    assert not built.usable
+    assert "no ConfigMap 'lab-pools'" in built.problem
+    assert not (tmp_path / "repo").exists()
 
 
 def test_of_several_fabrics_one_is_named(tmp_path: Path):

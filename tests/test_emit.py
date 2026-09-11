@@ -150,6 +150,83 @@ def test_passwords_carried_as_plain_text_are_named_per_object(repo):
     assert "ansible_become" not in result.stderr
 
 
+POOL = "node_id_pools:\n  fabric_name=FABRIC/type=spine:\n    hostname=dc1-spine1: 1\n"
+
+
+def write_pool(repo, name: str) -> None:
+    (repo / "intended" / "data").mkdir(parents=True)
+    (repo / "intended" / "data" / name).write_text(POOL)
+
+
+def test_a_pool_file_is_carried_in_a_config_map_the_fabric_names(repo):
+    (repo / "group_vars" / "FABRIC.yml").write_text(
+        "fabric_name: FABRIC\n"
+        "fabric_numbering: {node_id: {algorithm: pool_manager, pools_file: intended/data/ids.yml}}\n"
+    )
+    write_pool(repo, "ids.yml")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert documents[0]["spec"]["pools"] == [
+        {
+            "configMapRef": {"name": "single-dc-l3ls-pools", "key": "ids.yml"},
+            "path": "intended/data/ids.yml",
+            "beside": "playbook",
+        }
+    ]
+    assert documents[1] == {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": "single-dc-l3ls-pools",
+            "labels": {"avd.netclab.dev/fabric": "single-dc-l3ls"},
+        },
+        "data": {"ids.yml": POOL},
+    }
+
+
+def test_without_pools_file_the_default_beside_the_inventory_is_carried(repo):
+    (repo / "group_vars" / "FABRIC.yml").write_text(
+        "fabric_name: FABRIC\nfabric_numbering: {node_id: {algorithm: pool_manager}}\n"
+    )
+    write_pool(repo, "FABRIC-ids.yml")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    (entry,) = documents[0]["spec"]["pools"]
+    assert (entry["path"], entry["beside"]) == ("intended/data/FABRIC-ids.yml", "inventory")
+
+
+def test_a_root_dir_not_followed_is_named_and_nothing_is_guessed(repo):
+    (repo / "group_vars" / "FABRIC.yml").write_text(
+        "fabric_name: FABRIC\nroot_dir: /srv/avd\n"
+        "fabric_numbering: {node_id: {algorithm: pool_manager}}\n"
+    )
+    write_pool(repo, "FABRIC-ids.yml")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert "pools" not in documents[0]["spec"]
+    assert "root_dir is /srv/avd" in result.stderr
+
+
+def test_a_missing_pool_file_is_named_and_nothing_is_carried(repo):
+    (repo / "group_vars" / "FABRIC.yml").write_text(
+        "fabric_name: FABRIC\n"
+        "fabric_numbering: {node_id: {algorithm: pool_manager, pools_file: intended/data/ids.yml}}\n"
+    )
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert [doc["kind"] for doc in documents] == ["Fabric", "FabricInput"]
+    assert "pools" not in documents[0]["spec"]
+    assert "no pool file at intended/data/ids.yml -- AVD assigns node IDs afresh" in result.stderr
+
+
 def test_an_input_whose_name_is_too_long_is_refused_and_fails_the_run(repo):
     group = "G" * 240  # single-dc-l3ls- in front makes 255
     (repo / "group_vars" / f"{group}.yml").write_text("a: 1\n")

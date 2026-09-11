@@ -7,6 +7,7 @@ the source's own is kept only where a path in it is load-bearing:
     <inventory>                      spec.groups -- where ansible.cfg names it,
                                      else inventory/hosts.yml
     <inventory dir>/group_vars/ ...  every FabricInput beside the inventory
+    <root beside>/<path>             every pool file spec.pools names, from its ConfigMap
     playbook.yml                     [spec.play], at the root
     group_vars/, host_vars/          every FabricInput beside the playbook
 
@@ -30,7 +31,7 @@ from pathlib import Path, PurePosixPath
 from netadopt import ansible_yaml
 from netadopt.ansiblecfg import CONFIG_FILE, AnsibleCfg
 from netadopt.varfiles import GROUP_VARS, HOST_VARS, INVENTORY_ROOT, PLAYBOOK_ROOT
-from netadopt.xr import FABRIC, FABRIC_INPUT
+from netadopt.xr import CONFIG_MAP, FABRIC, FABRIC_INPUT
 
 PLAYBOOK = "playbook.yml"
 DEFAULT_INVENTORY = "inventory/hosts.yml"
@@ -113,6 +114,25 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
         problems.append("the Fabric selects no inputs: spec.inputs.matchLabels is empty")
     bases = {INVENTORY_ROOT: inventory.parent, PLAYBOOK_ROOT: _ROOT}
 
+    for entry in spec.get("pools") or []:
+        if not isinstance(entry, dict):
+            problems.append(f"pool {entry!r}: not a mapping")
+            continue
+        path, beside = entry.get("path"), entry.get("beside")
+        what = f"pool {path!r}"
+        if beside not in bases:
+            problems.append(f"{what}: beside is {beside!r}, not inventory or playbook")
+            continue
+        if not isinstance(path, str) or not path or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
+            problems.append(f"{what}: not a path inside the repository")
+            continue
+        ref = entry.get("configMapRef") or {}
+        text = _config_map_value(documents, ref.get("name"), ref.get("key"))
+        if text is None:
+            problems.append(f"{what}: no ConfigMap {ref.get('name')!r} holding {ref.get('key')!r}")
+            continue
+        plan(bases[beside] / path, text, what)
+
     for doc in documents:
         labels = (doc.get("metadata") or {}).get("labels") or {}
         if doc.get("kind") != FABRIC_INPUT or not selector or not selector.items() <= labels.items():
@@ -164,6 +184,14 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
         files=tuple(str(path) for path in planned),
         vault_password=vault,
     )
+
+
+def _config_map_value(documents: list[dict], name: object, key: object) -> str | None:
+    for doc in documents:
+        if doc.get("kind") == CONFIG_MAP and (doc.get("metadata") or {}).get("name") == name:
+            value = (doc.get("data") or {}).get(key)
+            return value if isinstance(value, str) else None
+    return None
 
 
 def _vault_password(spec: dict, config: AnsibleCfg) -> tuple[SecretRef | None, str | None]:

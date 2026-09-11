@@ -20,6 +20,7 @@ from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import Play, Playbook, find_playbooks, read_playbook
+from netadopt.pools import find_pools
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
 from netadopt.xr import (
     LABEL_MAX,
@@ -27,6 +28,7 @@ from netadopt.xr import (
     fabric,
     fabric_inputs,
     plain_passwords,
+    pool_objects,
     rfc1123,
     to_yaml,
     vault_secret,
@@ -132,11 +134,11 @@ def emit(
     source = _inventory_source(inventory, config)
     found = read_vars(repo, source, playbook)
     inputs = fabric_inputs(found, spelled)
-    document, said = _fabric(repo, playbook, source, play, spelled, config)
+    fabric_documents, said = _fabric(repo, playbook, source, play, spelled, config, found)
     if name and spelled != name:
         said.insert(0, f"--name {name} is spelled {spelled}")
 
-    documents = ((document,) if document else ()) + inputs.documents
+    documents = fabric_documents + inputs.documents
     if documents:
         typer.echo(to_yaml(documents), nl=False)
 
@@ -154,7 +156,7 @@ def emit(
     if not inputs.documents:
         typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
-    if document is None or found.problems or inputs.problems:
+    if not fabric_documents or found.problems or inputs.problems:
         raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
 
@@ -166,21 +168,23 @@ def _fabric(
     index: int,
     name: str,
     config: AnsibleCfg,
-) -> tuple[dict | None, list[str]]:
-    """The Fabric document named `name`, or None; and the lines saying what became of it."""
+    found: VarFiles,
+) -> tuple[tuple[dict, ...], list[str]]:
+    """The Fabric named `name` and the ConfigMap of its pools, or nothing; and the lines
+    saying what became of them."""
     if playbook is None:
-        return None, ["Fabric not emitted: no playbook named -- pass --playbook"]
+        return (), ["Fabric not emitted: no playbook named -- pass --playbook"]
     read = read_playbook(repo, playbook)
     if not read.usable:
-        return None, [f"Fabric not emitted: {read.problem}"]
+        return (), [f"Fabric not emitted: {read.problem}"]
     if not 0 <= index < len(read.plays):
         held = len(read.plays)
-        return None, [f"Fabric not emitted: no play [{index}] -- {read.path.name} holds {held}"]
+        return (), [f"Fabric not emitted: no play [{index}] -- {read.path.name} holds {held}"]
     if not config.usable:
-        return None, [f"Fabric not emitted: {config.problem}"]
+        return (), [f"Fabric not emitted: {config.problem}"]
     written = read_inventory_file(repo, source)
     if not written.usable:
-        return None, [f"Fabric not emitted: {written.problem}"]
+        return (), [f"Fabric not emitted: {written.problem}"]
 
     chosen = read.plays[index]
     said = [f"Fabric {name} <- {_label(chosen)}"]
@@ -205,8 +209,18 @@ def _fabric(
                 f"--from-file={VAULT_SECRET_KEY}={shlex.quote(where)}"
             ),
         ]
-    document = fabric(name, chosen.raw, written.groups, config.sections, vault_password=bool(named))
-    return document, said
+    pooled = find_pools(found, chosen.raw, repo)
+    said += pooled.notes
+    entries, config_map = pool_objects(name, pooled.files)
+    document = fabric(
+        name,
+        chosen.raw,
+        written.groups,
+        config.sections,
+        vault_password=bool(named),
+        pools=entries,
+    )
+    return ((document, config_map) if config_map else (document,)), said
 
 
 def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:
