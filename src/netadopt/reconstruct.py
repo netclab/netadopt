@@ -13,6 +13,10 @@ the source's own is kept only where a path in it is load-bearing:
 Paths inside `design` and ansible.cfg are relative to the source's playbook and
 inventory, and this layout keeps them true. Every FabricInput is one file; Ansible
 ranks them itself, as it did on disk.
+
+The vault password is never written. `vault_password` names the Secret
+`spec.vaultPassword` points to, and whoever runs Ansible on repo' supplies it through
+ANSIBLE_VAULT_PASSWORD_FILE, which outranks the file ansible.cfg names.
 """
 
 from __future__ import annotations
@@ -38,11 +42,20 @@ _ROOT = PurePosixPath(".")
 
 
 @dataclass(frozen=True)
+class SecretRef:
+    """A key of a Secret in the Fabric's own namespace."""
+
+    name: str
+    key: str
+
+
+@dataclass(frozen=True)
 class Reconstructed:
     root: Path
     inventory: str | None = None  # the -i argument, relative to root
     playbook: str | None = None  # relative to root
     files: tuple[str, ...] = ()  # everything written, relative to root
+    vault_password: SecretRef | None = None  # to supply when Ansible runs on repo'
     problem: str | None = None
 
     @property
@@ -85,6 +98,9 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
         problems.append("the Fabric carries no play")
     if not spec.get("groups"):
         problems.append("the Fabric carries no inventory")
+    vault, problem = _vault_password(spec, AnsibleCfg(sections=config))
+    if problem:
+        problems.append(problem)
 
     if config:
         plan(PurePosixPath(CONFIG_FILE), _cfg_text(config), "ansibleCfg")
@@ -146,7 +162,23 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
         inventory=str(inventory),
         playbook=PLAYBOOK,
         files=tuple(str(path) for path in planned),
+        vault_password=vault,
     )
+
+
+def _vault_password(spec: dict, config: AnsibleCfg) -> tuple[SecretRef | None, str | None]:
+    """The Secret `spec.vaultPassword` names, or why it does not match ansible.cfg."""
+    ref = (spec.get("vaultPassword") or {}).get("secretRef")
+    named = config.vault_password_file
+    if ref is None:
+        if named:
+            return None, f"ansible.cfg names the vault password file {named}, and spec.vaultPassword names no Secret"
+        return None, None
+    if not named:
+        return None, "spec.vaultPassword names a Secret, and ansible.cfg names no vault password file"
+    if not isinstance(ref, dict) or not all(isinstance(ref.get(k), str) and ref[k] for k in ("name", "key")):
+        return None, f"spec.vaultPassword.secretRef needs a name and a key: {ref!r}"
+    return SecretRef(name=ref["name"], key=ref["key"]), None
 
 
 def _inventory(config: AnsibleCfg) -> tuple[PurePosixPath, str | None]:

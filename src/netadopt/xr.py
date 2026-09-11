@@ -39,6 +39,29 @@ LABEL_MAX = 63
 # The longest object name Kubernetes accepts.
 NAME_MAX = 253
 
+# The key of the vault password in its Secret.
+VAULT_SECRET_KEY = "password"
+
+# Every variable ansible-core 2.21's connection and become plugins read a password or
+# passphrase from. Collections may add their own; these are Ansible's.
+PASSWORD_VARS = frozenset(
+    {
+        "ansible_password",
+        "ansible_ssh_pass",
+        "ansible_ssh_password",
+        "ansible_become_pass",
+        "ansible_become_password",
+        "ansible_su_pass",
+        "ansible_sudo_pass",
+        "ansible_runas_pass",
+        "ansible_winrm_pass",
+        "ansible_winrm_password",
+        "ansible_private_key_passphrase",
+        "ansible_ssh_private_key_passphrase",
+        "ansible_psrp_certificate_key_password",
+    }
+)
+
 # RFC 1123: lower case, digits and "-", starting and ending alphanumeric.
 _NOT_NAME = re.compile(r"[^a-z0-9-]+")
 
@@ -50,23 +73,56 @@ class Emitted:
     problems: tuple[str, ...] = ()  # objects refused, which fail the run
 
 
-def fabric(name: str, play: dict, groups: dict, ansible_cfg: dict) -> dict:
+def fabric(
+    name: str, play: dict, groups: dict, ansible_cfg: dict, vault_password: bool = False
+) -> dict:
     """The Fabric object: one play, the inventory and ansible.cfg, each as written.
 
     `name` is already a Kubernetes name, and the FabricInputs emitted with it carry it
-    in the label `spec.inputs` selects.
+    in the label `spec.inputs` selects. `vault_password` is set when ansible.cfg names
+    a vault password file: the password is never carried, and `spec.vaultPassword`
+    names the Secret holding it, in the Fabric's own namespace.
     """
-    return {
-        "apiVersion": API_VERSION,
-        "kind": FABRIC,
-        "metadata": {"name": name},
-        "spec": {
-            "inputs": {"matchLabels": {FABRIC_LABEL: name}},
-            "play": play,
-            "ansibleCfg": ansible_cfg,
-            "groups": groups,
-        },
-    }
+    spec: dict = {"inputs": {"matchLabels": {FABRIC_LABEL: name}}}
+    if vault_password:
+        spec["vaultPassword"] = {
+            "secretRef": {"name": vault_secret(name), "key": VAULT_SECRET_KEY}
+        }
+    spec |= {"play": play, "ansibleCfg": ansible_cfg, "groups": groups}
+    return {"apiVersion": API_VERSION, "kind": FABRIC, "metadata": {"name": name}, "spec": spec}
+
+
+def vault_secret(fabric_name: str) -> str:
+    """The name of the Secret a Fabric's vault password is kept in."""
+    return f"{fabric_name}-vault"
+
+
+def plain_passwords(documents: tuple[dict, ...]) -> list[tuple[str, list[str]]]:
+    """Per object, the password variables it carries as plain text, as the repository has them.
+
+    A `!vault` value is ciphertext and a `{{ ... }}` value an expression; neither is a
+    password in plain text.
+    """
+    found = []
+    for doc in documents:
+        names = sorted(_plain(doc.get("spec") or {}))
+        if names:
+            found.append((f"{doc.get('kind')} {(doc.get('metadata') or {}).get('name')}", names))
+    return found
+
+
+def _plain(node: object) -> set[str]:
+    names: set[str] = set()
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in PASSWORD_VARS and isinstance(value, str) and value and "{{" not in value:
+                names.add(key)
+            else:
+                names |= _plain(value)
+    elif isinstance(node, list):
+        for item in node:
+            names |= _plain(item)
+    return names
 
 
 def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
@@ -125,9 +181,24 @@ def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
     return Emitted(documents=tuple(documents), notes=tuple(notes), problems=tuple(problems))
 
 
+class _Dumper(yaml.SafeDumper):
+    """SafeDumper writing a string of several lines as a literal block, line by line."""
+
+
+def _str(dumper: _Dumper, data: str) -> yaml.Node:
+    # A quoted scalar can only show a line break as an empty line.
+    style = "|" if "\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+
+_Dumper.add_representer(str, _str)
+
+
 def to_yaml(documents: tuple[dict, ...]) -> str:
-    """The documents as one stream, ready for `kubectl apply -f -`."""
-    return yaml.safe_dump_all(documents, sort_keys=False, explicit_start=True)
+    """The documents as one stream, ready for `kubectl apply -f -`; long lines never folded."""
+    return yaml.dump_all(
+        documents, Dumper=_Dumper, sort_keys=False, explicit_start=True, width=float("inf")
+    )
 
 
 def rfc1123(name: str) -> str:

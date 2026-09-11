@@ -36,6 +36,11 @@ class AnsibleCfg:
         raw = self.sections.get("defaults", {}).get("inventory", "")
         return tuple(part.strip() for part in raw.split(",") if part.strip())
 
+    @property
+    def vault_password_file(self) -> str | None:
+        """The path `[defaults] vault_password_file` names, as written."""
+        return self.sections.get("defaults", {}).get("vault_password_file") or None
+
 
 def read_ansible_cfg(repo: Path) -> AnsibleCfg:
     """`repo/ansible.cfg`, section by section, every value the string it is written as.

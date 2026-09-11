@@ -6,14 +6,23 @@ beside a playbook are not in that answer, so they are left to the fidelity test.
 
 from __future__ import annotations
 
+import pytest
+
 from netadopt.ansible import Ansible
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.reconstruct import Reconstructed
 
 
 def test_the_rebuilt_repository_lists_as_the_source_does(
-    ansible: Ansible, listed: Inventory, reconstructed: Reconstructed
+    ansible: Ansible,
+    listed: Inventory,
+    reconstructed: Reconstructed,
+    rebuilt_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    # only for repo': the source was listed as it stands
+    for name, value in rebuilt_env.items():
+        monkeypatch.setenv(name, value)
     again = read_inventory(ansible, reconstructed.root, reconstructed.inventory)
     assert again.usable, again.problem
 

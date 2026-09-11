@@ -32,6 +32,7 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
     playbook: str,
     inventory_source: str | None,
     reconstructed: Reconstructed,
+    rebuilt_env: dict[str, str],
     resolve,
     tmp_path: Path,
 ):
@@ -42,7 +43,7 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
     if not expected.hosts:
         pytest.skip(f"nothing to compare: {expected.problem or 'no host was templated'}")
 
-    got = resolve(reconstructed.root, reconstructed.inventory, reconstructed.playbook)
+    got = resolve(reconstructed.root, reconstructed.inventory, reconstructed.playbook, rebuilt_env)
     assert got.problem is None, got.problem
     # A host the source cannot template either is compared by failing the same way.
     assert got.failed == expected.failed

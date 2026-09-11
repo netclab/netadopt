@@ -99,6 +99,57 @@ def test_play_and_name_carry_another_play_under_its_own_name(repo):
     assert documents[1]["metadata"]["name"] == "dc1-twin-fabric"
 
 
+def test_a_vault_password_file_is_named_as_a_secret_and_never_carried(repo):
+    (repo / "ansible.cfg").write_text("[defaults]\ninventory=inventory.yml\nvault_password_file=.vault\n")
+    (repo / ".vault").write_text("not-a-real-password\n")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert documents[0]["spec"]["vaultPassword"] == {
+        "secretRef": {"name": "single-dc-l3ls-vault", "key": "password"}
+    }
+    assert "not-a-real-password" not in result.stdout
+    assert (
+        f"kubectl create secret generic single-dc-l3ls-vault --from-file=password={repo / '.vault'}"
+        in result.stderr
+    )
+
+
+def test_a_vaulted_value_is_written_line_by_line(repo):
+    ciphertext = "$ANSIBLE_VAULT;1.1;AES256\n" + "6162636465" * 8 + "\n" + "6162" + "\n"
+    body = "\n".join("  " + line for line in ciphertext.splitlines())
+    (repo / "group_vars" / "FABRIC.yml").write_text(f"fabric_name: FABRIC\nsecret: !vault |\n{body}\n")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert documents[1]["spec"]["design"]["secret"] == {"__ansible_vault": ciphertext}
+    assert "__ansible_vault: |\n" in result.stdout
+    assert "\n\n" not in result.stdout
+
+
+def test_passwords_carried_as_plain_text_are_named_per_object(repo):
+    (repo / "inventory.yml").write_text(
+        "all:\n  children:\n    FABRIC:\n      hosts:\n"
+        "        dc1-spine1: {ansible_host: 172.16.1.11, ansible_ssh_pass: arista}\n"
+    )
+    (repo / "group_vars" / "FABRIC.yml").write_text(
+        "fabric_name: FABRIC\n"
+        "ansible_password: arista\n"
+        "ansible_become_password: \"{{ lookup('env', 'ENABLE') }}\"\n"
+        "ansible_become_pass: !vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  6162\n"
+    )
+
+    result, _ = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert "carried as plain text" in result.stderr
+    assert "  Fabric single-dc-l3ls: ansible_ssh_pass\n" in result.stderr
+    assert "  FabricInput single-dc-l3ls-fabric: ansible_password\n" in result.stderr
+    assert "ansible_become" not in result.stderr
+
+
 def test_an_input_whose_name_is_too_long_is_refused_and_fails_the_run(repo):
     group = "G" * 240  # single-dc-l3ls- in front makes 255
     (repo / "group_vars" / f"{group}.yml").write_text("a: 1\n")

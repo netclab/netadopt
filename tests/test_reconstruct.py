@@ -15,7 +15,7 @@ from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import read_playbook
-from netadopt.reconstruct import reconstruct
+from netadopt.reconstruct import SecretRef, reconstruct
 from netadopt.varfiles import read_vars
 from netadopt.xr import API_VERSION, FABRIC_INPUT, FABRIC_LABEL, fabric
 
@@ -23,8 +23,8 @@ PLAY = {"name": "Build", "hosts": "FABRIC", "gather_facts": False, "tasks": []}
 GROUPS = {"all": {"children": {"FABRIC": {"hosts": {"dc1-spine1": {"ansible_host": "10.0.0.1"}}}}}}
 
 
-def fabric_doc(cfg: dict | None = None, name: str = "lab") -> dict:
-    return fabric(name, PLAY, GROUPS, cfg or {})
+def fabric_doc(cfg: dict | None = None, name: str = "lab", vault: bool = False) -> dict:
+    return fabric(name, PLAY, GROUPS, cfg or {}, vault_password=vault)
 
 
 def input_doc(
@@ -175,6 +175,33 @@ def test_vars_beside_the_playbook_cannot_share_the_inventorys_directory(tmp_path
 
     assert not built.usable
     assert "beside the playbook" in built.problem
+
+
+VAULTED = {"defaults": {"inventory": "inventory.yml", "vault_password_file": ".vault"}}
+
+
+def test_the_vault_password_is_named_as_a_secret_and_never_written(tmp_path: Path):
+    built = reconstruct([fabric_doc(VAULTED, vault=True)], tmp_path / "repo")
+
+    assert built.usable, built.problem
+    assert built.vault_password == SecretRef(name="lab-vault", key="password")
+    assert ".vault" not in built.files
+    assert read_ansible_cfg(built.root).vault_password_file == ".vault"
+
+
+def test_a_vault_password_file_with_no_secret_named_writes_nothing(tmp_path: Path):
+    built = reconstruct([fabric_doc(VAULTED)], tmp_path / "repo")
+
+    assert not built.usable
+    assert "names no Secret" in built.problem
+    assert not (tmp_path / "repo").exists()
+
+
+def test_a_secret_named_with_no_vault_password_file_writes_nothing(tmp_path: Path):
+    built = reconstruct([fabric_doc(vault=True)], tmp_path / "repo")
+
+    assert not built.usable
+    assert "names no vault password file" in built.problem
 
 
 def test_of_several_fabrics_one_is_named(tmp_path: Path):

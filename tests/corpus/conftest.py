@@ -185,14 +185,27 @@ def emitted(
 
 
 @pytest.fixture
-def reconstructed(repo: Path, emitted: list[dict], tmp_path: Path) -> Reconstructed:
+def reconstructed(emitted: list[dict], tmp_path: Path) -> Reconstructed:
     """repo', rebuilt from what `emit` writes."""
-    named = read_ansible_cfg(repo).sections.get("defaults", {}).get("vault_password_file")
-    if named:
-        pytest.skip(f"ansible.cfg names {named}, and files named by path are not carried yet")
     built = reconstruct(emitted, tmp_path / "rebuilt")
     assert built.usable, built.problem
     return built
+
+
+@pytest.fixture
+def rebuilt_env(repo: Path, reconstructed: Reconstructed, tmp_path: Path) -> dict[str, str]:
+    """The environment repo' is run with: its vault password, from outside it.
+
+    The source's file stands in for the Secret `vault_password` names. Ansible's own
+    variable outranks the vault_password_file ansible.cfg names.
+    """
+    if reconstructed.vault_password is None:
+        return {}
+    named = read_ansible_cfg(repo).vault_password_file
+    password = tmp_path / "vault-password"
+    password.write_bytes((repo / named).read_bytes())
+    password.chmod(0o600)
+    return {"ANSIBLE_VAULT_PASSWORD_FILE": str(password)}
 
 
 # The task AVD writes every host's resolved vars from, as templated/<host>.json.
@@ -201,6 +214,8 @@ ORACLE_PLAYBOOK = "netadopt-oracle.yml"
 # An inventory's ansible_connection outranks -c; extra vars are the one level above it.
 ORACLE_EXTRA_VARS = ("ansible_connection=local", "ansible_become=false")
 ORACLE_TIMEOUT = 600
+# How a file ansible-vault encrypted begins.
+VAULT_HEADER = b"$ANSIBLE_VAULT;"
 
 # The task names every host it could not template, then fails. A host name may hold dots.
 _FAILED_HOSTS = re.compile(r"processing \d+ host\(s\): (.+?)\.(?:\"|$)", re.MULTILINE)
@@ -214,7 +229,7 @@ class Resolved:
     problem: str | None = None  # set when there is nothing to compare
 
 
-Resolve = Callable[[Path, str | None, str], Resolved]
+Resolve = Callable[..., Resolved]
 
 
 @pytest.fixture
@@ -237,7 +252,9 @@ def resolve(ansible: Ansible) -> Resolve:
         "AVD_NEVER_RUN_FROM_SOURCE": "1",
     }
 
-    def run(root: Path, inventory: str | None, playbook: str) -> Resolved:
+    def run(
+        root: Path, inventory: str | None, playbook: str, more_env: dict[str, str] | None = None
+    ) -> Resolved:
         out = root.parent / f"{root.name}-oracle"
         raw = read_playbook(root, playbook).plays[0].raw
         if any(key in raw for key in _IMPORT_PLAYBOOK):
@@ -258,11 +275,12 @@ def resolve(ansible: Ansible) -> Resolve:
             command += ["-i", inventory]
         for extra in ORACLE_EXTRA_VARS:
             command += ["-e", extra]
+        run_env = {**env, **(more_env or {})}
         done = subprocess.run(
             command,
             check=False,
             cwd=root,
-            env=env,
+            env=run_env,
             capture_output=True,
             text=True,
             timeout=ORACLE_TIMEOUT,
@@ -278,9 +296,30 @@ def resolve(ansible: Ansible) -> Resolve:
             # the rest of the hosts were templated, and are compared
             failed = frozenset(host.strip() for host in named.group(1).split(","))
 
+        files = sorted((out / "templated").glob("*.json"))
+        vaulted = [str(file) for file in files if file.read_bytes().startswith(VAULT_HEADER)]
+        if vaulted:
+            # validate_inputs encrypts what it writes whenever a vault password is set;
+            # the same directory and environment open it with the same password
+            exe = ansible.beside("ansible-vault")
+            if exe is None:
+                return Resolved(problem=f"ansible-vault is missing beside {ansible.exe}")
+            opened = subprocess.run(
+                [str(exe), "decrypt", *vaulted],
+                check=False,
+                cwd=root,
+                env=run_env,
+                capture_output=True,
+                text=True,
+                timeout=ORACLE_TIMEOUT,
+                stdin=subprocess.DEVNULL,
+            )
+            if opened.returncode != 0:
+                return Resolved(problem=f"ansible-vault decrypt: {opened.stderr.strip()}")
+
         hosts = {
             file.stem: json.loads(file.read_text(encoding="utf-8").replace(str(root), "<root>"))
-            for file in sorted((out / "templated").glob("*.json"))
+            for file in files
         }
         return Resolved(hosts=hosts, failed=failed)
 

@@ -8,6 +8,7 @@ The default verb is the report.
 
 from __future__ import annotations
 
+import shlex
 from collections import Counter
 from pathlib import Path
 from typing import Annotated
@@ -20,7 +21,16 @@ from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import Play, Playbook, find_playbooks, read_playbook
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
-from netadopt.xr import LABEL_MAX, fabric, fabric_inputs, rfc1123, to_yaml
+from netadopt.xr import (
+    LABEL_MAX,
+    VAULT_SECRET_KEY,
+    fabric,
+    fabric_inputs,
+    plain_passwords,
+    rfc1123,
+    to_yaml,
+    vault_secret,
+)
 
 app = typer.Typer(
     help="Read a network-automation repository and report what is in it.",
@@ -132,6 +142,15 @@ def emit(
 
     for line in (*said, *inputs.notes, *inputs.problems):
         typer.echo(line, err=True)
+    plain = plain_passwords(documents)
+    if plain:
+        typer.echo(
+            "carried as plain text, as the repository has them -- "
+            "readable by anyone who can read these objects:",
+            err=True,
+        )
+        for where, names in plain:
+            typer.echo(f"  {where}: {', '.join(names)}", err=True)
     if not inputs.documents:
         typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
@@ -172,7 +191,22 @@ def _fabric(
         for other in read.plays
         if other is not chosen
     ]
-    return fabric(name, chosen.raw, written.groups, config.sections), said
+    named = config.vault_password_file
+    if named:
+        # a relative path is relative to ansible.cfg, at the repository's root
+        where = named if named.startswith(("/", "~")) else str(repo / named)
+        said += [
+            (
+                f"not carried: the vault password file {named}, named by ansible.cfg -- "
+                "spec.vaultPassword names the Secret, create it:"
+            ),
+            (
+                f"  kubectl create secret generic {vault_secret(name)} "
+                f"--from-file={VAULT_SECRET_KEY}={shlex.quote(where)}"
+            ),
+        ]
+    document = fabric(name, chosen.raw, written.groups, config.sections, vault_password=bool(named))
+    return document, said
 
 
 def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:
