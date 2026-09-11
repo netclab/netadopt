@@ -7,7 +7,8 @@ the source's own is kept only where a path in it is load-bearing:
     <inventory>                      spec.groups -- where ansible.cfg names it,
                                      else inventory/hosts.yml
     <inventory dir>/group_vars/ ...  every FabricInput beside the inventory
-    <root beside>/<path>             every pool file spec.pools names, from its ConfigMap
+    <root beside>/<path>             every file spec.pools and spec.files name, from its
+                                     ConfigMap
     playbook.yml                     [spec.play], at the root
     group_vars/, host_vars/          every FabricInput beside the playbook
 
@@ -114,12 +115,14 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
         problems.append("the Fabric selects no inputs: spec.inputs.matchLabels is empty")
     bases = {INVENTORY_ROOT: inventory.parent, PLAYBOOK_ROOT: _ROOT}
 
-    for entry in spec.get("pools") or []:
+    carried = [("pool", entry) for entry in spec.get("pools") or []]
+    carried += [("file", entry) for entry in spec.get("files") or []]
+    for kind, entry in carried:
         if not isinstance(entry, dict):
-            problems.append(f"pool {entry!r}: not a mapping")
+            problems.append(f"{kind} {entry!r}: not a mapping")
             continue
         path, beside = entry.get("path"), entry.get("beside")
-        what = f"pool {path!r}"
+        what = f"{kind} {path!r}"
         if beside not in bases:
             problems.append(f"{what}: beside is {beside!r}, not inventory or playbook")
             continue

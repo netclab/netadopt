@@ -23,10 +23,10 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
 
 import yaml
 
+from netadopt.files import NamedFile
 from netadopt.pools import PoolFile
 from netadopt.varfiles import GROUP_VARS, VarFiles
 
@@ -69,6 +69,8 @@ PASSWORD_VARS = frozenset(
 _NOT_NAME = re.compile(r"[^a-z0-9-]+")
 
 CONFIG_MAP = "ConfigMap"
+# The most a ConfigMap's data holds, all of it together.
+CONFIG_MAP_MAX = 1024 * 1024
 # What a ConfigMap key may hold.
 _NOT_KEY = re.compile(r"[^-._a-zA-Z0-9]+")
 
@@ -87,14 +89,15 @@ def fabric(
     ansible_cfg: dict,
     vault_password: bool = False,
     pools: list[dict] | None = None,
+    files: list[dict] | None = None,
 ) -> dict:
     """The Fabric object: one play, the inventory and ansible.cfg, each as written.
 
     `name` is already a Kubernetes name, and the FabricInputs emitted with it carry it
     in the label `spec.inputs` selects. `vault_password` is set when ansible.cfg names
     a vault password file: the password is never carried, and `spec.vaultPassword`
-    names the Secret holding it, in the Fabric's own namespace. `pools` are the
-    entries `pool_objects` makes.
+    names the Secret holding it, in the Fabric's own namespace. `pools` and `files` are
+    the entries `pool_objects` and `named_file_objects` make.
     """
     spec: dict = {"inputs": {"matchLabels": {FABRIC_LABEL: name}}}
     if vault_password:
@@ -103,6 +106,8 @@ def fabric(
         }
     if pools:
         spec["pools"] = pools
+    if files:
+        spec["files"] = files
     spec |= {"play": play, "ansibleCfg": ansible_cfg, "groups": groups}
     return {"apiVersion": API_VERSION, "kind": FABRIC, "metadata": {"name": name}, "spec": spec}
 
@@ -113,16 +118,36 @@ def vault_secret(fabric_name: str) -> str:
 
 
 def pool_objects(fabric_name: str, files: Iterable[PoolFile]) -> tuple[list[dict], dict | None]:
-    """`spec.pools`, and the ConfigMap it names: every pool file, one key each.
+    """`spec.pools`, and the ConfigMap it names: every pool file, one key each."""
+    return _file_objects(f"{fabric_name}-pools", fabric_name, files)
 
-    The key is the file's name, and the entry says where the file goes back: a
-    ConfigMap key cannot hold a "/".
-    """
-    name = f"{fabric_name}-pools"
+
+def named_file_objects(
+    fabric_name: str, files: Iterable[NamedFile]
+) -> tuple[list[dict], dict | None]:
+    """`spec.files`, and the ConfigMap it names: every file the design names, one key each."""
+    return _file_objects(f"{fabric_name}-files", fabric_name, files)
+
+
+def config_map_key(path: str) -> str:
+    """The ConfigMap key a file is kept under: its path, "/" being no key's character."""
+    return _NOT_KEY.sub("-", path.replace("/", "."))
+
+
+def config_map_size(config_map: dict) -> int:
+    """The bytes a ConfigMap's data takes, keys included."""
+    data = config_map.get("data") or {}
+    return sum(len(key.encode()) + len(value.encode()) for key, value in data.items())
+
+
+def _file_objects(
+    name: str, fabric_name: str, files: Iterable[PoolFile | NamedFile]
+) -> tuple[list[dict], dict | None]:
+    """The entries naming each file by ConfigMap key and path, and the ConfigMap."""
     entries: list[dict] = []
     data: dict[str, str] = {}
     for file in files:
-        base = _NOT_KEY.sub("-", PurePosixPath(file.path).name)
+        base = config_map_key(file.path)
         key, number = base, 2
         while key in data:
             key, number = f"{number}-{base}", number + 1

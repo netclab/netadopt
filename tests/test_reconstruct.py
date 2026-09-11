@@ -13,12 +13,20 @@ from netadopt import ansible_yaml
 from netadopt.ansible_yaml import VAULT_KEY
 from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
+from netadopt.files import NamedFile
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import read_playbook
 from netadopt.pools import PoolFile
 from netadopt.reconstruct import SecretRef, reconstruct
 from netadopt.varfiles import read_vars
-from netadopt.xr import API_VERSION, FABRIC_INPUT, FABRIC_LABEL, fabric, pool_objects
+from netadopt.xr import (
+    API_VERSION,
+    FABRIC_INPUT,
+    FABRIC_LABEL,
+    fabric,
+    named_file_objects,
+    pool_objects,
+)
 
 PLAY = {"name": "Build", "hosts": "FABRIC", "gather_facts": False, "tasks": []}
 GROUPS = {"all": {"children": {"FABRIC": {"hosts": {"dc1-spine1": {"ansible_host": "10.0.0.1"}}}}}}
@@ -225,6 +233,17 @@ def test_a_pool_beside_the_inventory_follows_the_inventory(tmp_path: Path):
 
     assert built.usable, built.problem
     assert "inventory/intended/data/ids.yml" in built.files
+
+
+def test_a_named_file_goes_back_where_it_sat(tmp_path: Path):
+    entries, config_map = named_file_objects(
+        "lab", [NamedFile(path="templates/mlag/ethernet-interfaces.j2", beside="playbook", text="MLAG\n")]
+    )
+
+    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, files=entries), config_map], tmp_path / "repo")
+
+    assert built.usable, built.problem
+    assert (built.root / "templates/mlag/ethernet-interfaces.j2").read_text() == "MLAG\n"
 
 
 def test_a_pool_whose_config_map_is_missing_writes_nothing(tmp_path: Path):

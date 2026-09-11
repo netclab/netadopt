@@ -17,16 +17,21 @@ import typer
 
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
+from netadopt.files import find_named_files
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import Play, Playbook, find_playbooks, read_playbook
 from netadopt.pools import find_pools
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
 from netadopt.xr import (
+    CONFIG_MAP,
+    CONFIG_MAP_MAX,
     LABEL_MAX,
     VAULT_SECRET_KEY,
+    config_map_size,
     fabric,
     fabric_inputs,
+    named_file_objects,
     plain_passwords,
     pool_objects,
     rfc1123,
@@ -139,6 +144,20 @@ def emit(
         said.insert(0, f"--name {name} is spelled {spelled}")
 
     documents = fabric_documents + inputs.documents
+    too_big = [
+        doc
+        for doc in fabric_documents
+        if doc.get("kind") == CONFIG_MAP and config_map_size(doc) > CONFIG_MAP_MAX
+    ]
+    if too_big:
+        # a Fabric naming a ConfigMap the cluster refuses would be a Fabric half there
+        for doc in too_big:
+            typer.echo(
+                f"nothing emitted: ConfigMap {doc['metadata']['name']} would hold "
+                f"{config_map_size(doc)} bytes, over the {CONFIG_MAP_MAX} a ConfigMap holds",
+                err=True,
+            )
+        raise typer.Exit(2)
     if documents:
         typer.echo(to_yaml(documents), nl=False)
 
@@ -211,16 +230,20 @@ def _fabric(
         ]
     pooled = find_pools(found, chosen.raw, repo)
     said += pooled.notes
-    entries, config_map = pool_objects(name, pooled.files)
+    pool_entries, pools_map = pool_objects(name, pooled.files)
+    carried = find_named_files(found, chosen.raw, written.groups, repo, playbook)
+    said += carried.notes
+    file_entries, files_map = named_file_objects(name, carried.files)
     document = fabric(
         name,
         chosen.raw,
         written.groups,
         config.sections,
         vault_password=bool(named),
-        pools=entries,
+        pools=pool_entries,
+        files=file_entries,
     )
-    return ((document, config_map) if config_map else (document,)), said
+    return (document, *(doc for doc in (pools_map, files_map) if doc)), said
 
 
 def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:

@@ -26,7 +26,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 import yaml
@@ -229,6 +229,51 @@ def pool_file() -> Callable[[dict], str | None]:
         return f"{output_dir}/data/{hostvars.get('fabric_name')}-ids.yml"
 
     return where
+
+
+@pytest.fixture
+def named_files() -> Callable[[dict[str, dict], Path], set[str]]:
+    """Every file the hosts' resolved vars name by a relative path, where AVD opens it.
+
+    `<playbook dir>/templates/<path>` first, then `<playbook dir>/<path>`
+    (`compile_searchpath`). A host's pools_file is a pool, and compared as one.
+    """
+
+    def found(hosts: dict[str, dict], base: Path) -> set[str]:
+        values: set[str] = set()
+        pools: set[str] = set()
+        for hostvars in hosts.values():
+            _strings_into(hostvars, values)
+            numbering = hostvars.get("fabric_numbering") or {}
+            node_id = (numbering.get("node_id") or {}) if isinstance(numbering, dict) else {}
+            if node_id.get("pools_file"):
+                pools.add(str(node_id["pools_file"]))
+        out: set[str] = set()
+        for value in values - pools:
+            pure = PurePosixPath(value)
+            if "{{" in value or "<" in value or pure.is_absolute() or ".." in pure.parts:
+                continue
+            for path in (PurePosixPath("templates") / pure, pure):
+                try:
+                    if (base / path).is_file():
+                        out.add(str(path))
+                        break
+                except OSError:
+                    break
+        return out
+
+    return found
+
+
+def _strings_into(node: object, out: set[str]) -> None:
+    if isinstance(node, dict):
+        for value in node.values():
+            _strings_into(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _strings_into(value, out)
+    elif isinstance(node, str) and node and "\n" not in node and len(node) <= 1024:
+        out.add(node)
 
 
 # The task AVD writes every host's resolved vars from, as templated/<host>.json.

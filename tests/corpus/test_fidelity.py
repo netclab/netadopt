@@ -38,6 +38,7 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
     rebuilt_env: dict[str, str],
     resolve,
     pool_file,
+    named_files,
     tmp_path: Path,
 ):
     # A copy, so that the oracle's playbook is never written into the checkout.
@@ -66,6 +67,13 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
     pairs = {(pool_file(want), pool_file(got.hosts[host])) for host, want in expected.hosts.items()}
     for mine, theirs in sorted(pair for pair in pairs if pair[0] is not None):
         assert _bytes(source, mine) == _bytes(reconstructed.root, theirs), mine
+
+    # Every file the source's resolved vars name by path -- templates above all -- as
+    # AVD would open it: the list is the source's, so a file not carried is caught.
+    base = (source / playbook).parent
+    for path in sorted(named_files(expected.hosts, base)):
+        rebuilt = reconstructed.root / path
+        assert rebuilt.is_file() and rebuilt.read_bytes() == (base / path).read_bytes(), path
 
 
 def _bytes(root: Path, path: str | None) -> bytes | None:

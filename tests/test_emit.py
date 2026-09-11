@@ -170,7 +170,7 @@ def test_a_pool_file_is_carried_in_a_config_map_the_fabric_names(repo):
     assert result.exit_code == 0, result.stderr
     assert documents[0]["spec"]["pools"] == [
         {
-            "configMapRef": {"name": "single-dc-l3ls-pools", "key": "ids.yml"},
+            "configMapRef": {"name": "single-dc-l3ls-pools", "key": "intended.data.ids.yml"},
             "path": "intended/data/ids.yml",
             "beside": "playbook",
         }
@@ -182,7 +182,7 @@ def test_a_pool_file_is_carried_in_a_config_map_the_fabric_names(repo):
             "name": "single-dc-l3ls-pools",
             "labels": {"avd.netclab.dev/fabric": "single-dc-l3ls"},
         },
-        "data": {"ids.yml": POOL},
+        "data": {"intended.data.ids.yml": POOL},
     }
 
 
@@ -225,6 +225,88 @@ def test_a_missing_pool_file_is_named_and_nothing_is_carried(repo):
     assert [doc["kind"] for doc in documents] == ["Fabric", "FabricInput"]
     assert "pools" not in documents[0]["spec"]
     assert "no pool file at intended/data/ids.yml -- AVD assigns node IDs afresh" in result.stderr
+
+
+def write(repo, files: dict[str, str]) -> None:
+    for path, text in files.items():
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(text)
+
+
+def test_files_the_design_names_are_carried_in_a_config_map_by_path(repo):
+    write(
+        repo,
+        {
+            "group_vars/FABRIC.yml": (
+                "fabric_name: FABRIC\n"
+                "node_type_keys:\n"
+                "  - key: spine\n"
+                "    ip_addressing: {router_id: custom_templates/router-id.j2}\n"
+                "    interface_descriptions: {mlag_ethernet_interfaces: mlag/ethernet-interfaces.j2}\n"
+                "local_users: [{name: operator, shell: /sbin/nologin}]\n"
+            ),
+            "custom_templates/router-id.j2": "{{ switch.id }}\n",
+            "templates/mlag/ethernet-interfaces.j2": "MLAG\n",
+        },
+    )
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert documents[0]["spec"]["files"] == [
+        {
+            "configMapRef": {"name": "single-dc-l3ls-files", "key": "custom_templates.router-id.j2"},
+            "path": "custom_templates/router-id.j2",
+            "beside": "playbook",
+        },
+        {
+            "configMapRef": {"name": "single-dc-l3ls-files", "key": "templates.mlag.ethernet-interfaces.j2"},
+            "path": "templates/mlag/ethernet-interfaces.j2",
+            "beside": "playbook",
+        },
+    ]
+    assert documents[1]["kind"] == "ConfigMap"
+    assert documents[1]["data"] == {
+        "custom_templates.router-id.j2": "{{ switch.id }}\n",
+        "templates.mlag.ethernet-interfaces.j2": "MLAG\n",
+    }
+    assert "nologin" not in result.stderr
+
+
+def test_a_template_not_carried_or_pulling_in_another_is_named(repo):
+    write(
+        repo,
+        {
+            "group_vars/FABRIC.yml": (
+                "fabric_name: FABRIC\n"
+                "eos_designs_custom_templates: [{template: custom/a.j2}, {template: custom/gone.j2}]\n"
+            ),
+            "custom/a.j2": "{% include 'b.j2' %}\n",
+        },
+    )
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert [entry["path"] for entry in documents[0]["spec"]["files"]] == ["custom/a.j2"]
+    assert "custom/a.j2: pulls in other templates" in result.stderr
+    assert "custom/gone.j2: no such template beside the playbook" in result.stderr
+
+
+def test_a_config_map_over_a_mebibyte_emits_nothing(repo):
+    write(
+        repo,
+        {
+            "group_vars/FABRIC.yml": "fabric_name: FABRIC\ncustom_templates: [big.j2]\n",
+            "big.j2": "x" * (1024 * 1024) + "\n",
+        },
+    )
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 2
+    assert documents == []
+    assert "single-dc-l3ls-files" in result.stderr
 
 
 def test_an_input_whose_name_is_too_long_is_refused_and_fails_the_run(repo):
