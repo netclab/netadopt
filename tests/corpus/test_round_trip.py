@@ -6,26 +6,15 @@ beside a playbook are not in that answer, so they are left to the fidelity test.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from netadopt.ansible import Ansible
-from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.inventory import Inventory, read_inventory
-from netadopt.reconstruct import reconstruct
+from netadopt.reconstruct import Reconstructed
 
 
 def test_the_rebuilt_repository_lists_as_the_source_does(
-    ansible: Ansible, repo: Path, listed: Inventory, emitted: list[dict], tmp_path: Path
+    ansible: Ansible, listed: Inventory, reconstructed: Reconstructed
 ):
-    named = read_ansible_cfg(repo).sections.get("defaults", {}).get("vault_password_file")
-    if named:
-        pytest.skip(f"ansible.cfg names {named}, and files named by path are not carried yet")
-
-    built = reconstruct(emitted, tmp_path / "rebuilt")
-    assert built.usable, built.problem
-    again = read_inventory(ansible, built.root, built.inventory)
+    again = read_inventory(ansible, reconstructed.root, reconstructed.inventory)
     assert again.usable, again.problem
 
     # Groups as well as hostvars: a host with no vars is left out of hostvars.

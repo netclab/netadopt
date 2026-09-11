@@ -20,16 +20,25 @@ wrapper around a repository tested elsewhere, and is skipped with the reason.
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
+from netadopt import ansible_yaml
 from netadopt.ansible import Ansible, resolve_ansible
+from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.inventory import Inventory, read_inventory
+from netadopt.playbook import TASK_KEYS, read_playbook
+from netadopt.reconstruct import Reconstructed, reconstruct
 
 AVD_ENV = "NETADOPT_AVD"
 MOLECULE_FILE = "molecule.yml"
@@ -42,13 +51,17 @@ AVD_SUBMODULE = Path(__file__).resolve().parents[2] / "avd"
 AVD_COLLECTION = Path("ansible_collections/arista/avd")
 
 
-def _avd_repos() -> list[tuple[str, Path]]:
+def _avd_collection() -> Path | None:
     raw = os.environ.get(AVD_ENV)
     root = Path(raw).expanduser() if raw else AVD_SUBMODULE
-    collection = next(
+    return next(
         (path for path in (root / AVD_COLLECTION, root) if (path / "examples").is_dir()),
         None,
     )
+
+
+def _avd_repos() -> list[tuple[str, Path]]:
+    collection = _avd_collection()
     if collection is None:
         return []
 
@@ -156,11 +169,119 @@ def playbook(repo: Path) -> str:
 
 
 @pytest.fixture
-def emitted(repo: Path, playbook: str, inventory_source: str | None) -> list[dict]:
-    """What `emit` writes for the repository's first play."""
+def emitted(
+    repo: Path, playbook: str, inventory_source: str | None, listed: Inventory
+) -> list[dict]:
+    """What `emit` writes for the repository's first play.
+
+    `listed` first: a repository with no inventory of its own is skipped, not failed.
+    """
     args = ["avd", "emit", str(repo), "--playbook", playbook]
     if inventory_source:
         args += ["--inventory", inventory_source]
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.stderr
     return list(yaml.safe_load_all(result.stdout))
+
+
+@pytest.fixture
+def reconstructed(repo: Path, emitted: list[dict], tmp_path: Path) -> Reconstructed:
+    """repo', rebuilt from what `emit` writes."""
+    named = read_ansible_cfg(repo).sections.get("defaults", {}).get("vault_password_file")
+    if named:
+        pytest.skip(f"ansible.cfg names {named}, and files named by path are not carried yet")
+    built = reconstruct(emitted, tmp_path / "rebuilt")
+    assert built.usable, built.problem
+    return built
+
+
+# The task AVD writes every host's resolved vars from, as templated/<host>.json.
+ORACLE_TASK = "arista.avd.validate_inputs"
+ORACLE_PLAYBOOK = "netadopt-oracle.yml"
+# An inventory's ansible_connection outranks -c; extra vars are the one level above it.
+ORACLE_EXTRA_VARS = ("ansible_connection=local", "ansible_become=false")
+ORACLE_TIMEOUT = 600
+
+# The task names every host it could not template, then fails. A host name may hold dots.
+_FAILED_HOSTS = re.compile(r"processing \d+ host\(s\): (.+?)\.(?:\"|$)", re.MULTILINE)
+_IMPORT_PLAYBOOK = ("import_playbook", "ansible.builtin.import_playbook")
+
+
+@dataclass(frozen=True)
+class Resolved:
+    hosts: dict[str, dict] = field(default_factory=dict)  # host -> its vars, templated
+    failed: frozenset[str] = frozenset()  # hosts Ansible could not template
+    problem: str | None = None  # set when there is nothing to compare
+
+
+Resolve = Callable[[Path, str | None, str], Resolved]
+
+
+@pytest.fixture
+def resolve(ansible: Ansible) -> Resolve:
+    """Every host's vars as Ansible resolves them for the play, or why it could not.
+
+    The playbook's first play keeps everything but its tasks, which become the one task
+    that writes the vars out. A path under the repository reads `<root>`, so that two
+    directories compare.
+    """
+    collection = _avd_collection()
+    if collection is None:
+        pytest.skip("no AVD checkout")
+    env = {
+        **os.environ,
+        # ansible_collections/arista/avd -> the directory holding ansible_collections
+        "ANSIBLE_COLLECTIONS_PATH": str(collection.parents[2]),
+        # A git checkout of AVD otherwise imports pyavd from its own source tree, whose
+        # schema store is only built for a release.
+        "AVD_NEVER_RUN_FROM_SOURCE": "1",
+    }
+
+    def run(root: Path, inventory: str | None, playbook: str) -> Resolved:
+        out = root.parent / f"{root.name}-oracle"
+        raw = read_playbook(root, playbook).plays[0].raw
+        if any(key in raw for key in _IMPORT_PLAYBOOK):
+            return Resolved(problem="play [0] imports another playbook and has no hosts of its own")
+        play = {key: value for key, value in raw.items() if key not in (*TASK_KEYS, "roles")}
+        play["tasks"] = [
+            {
+                ORACLE_TASK: {"tmp_dir": str(out), "schema_name": "avd_design"},
+                "delegate_to": "localhost",
+                "run_once": True,
+            }
+        ]
+        book = (root / playbook).parent / ORACLE_PLAYBOOK
+        book.write_text(ansible_yaml.dump([play]), encoding="utf-8")
+
+        command = [str(ansible.exe), str(book.relative_to(root))]
+        if inventory:
+            command += ["-i", inventory]
+        for extra in ORACLE_EXTRA_VARS:
+            command += ["-e", extra]
+        done = subprocess.run(
+            command,
+            check=False,
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=ORACLE_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+        )
+        said = done.stdout + done.stderr
+        failed: frozenset[str] = frozenset()
+        if done.returncode != 0:
+            named = _FAILED_HOSTS.search(said)
+            if named is None:
+                errors = [line for line in said.splitlines() if "fatal:" in line or "ERROR" in line]
+                return Resolved(problem="\n".join(errors) or f"exit {done.returncode}")
+            # the rest of the hosts were templated, and are compared
+            failed = frozenset(host.strip() for host in named.group(1).split(","))
+
+        hosts = {
+            file.stem: json.loads(file.read_text(encoding="utf-8").replace(str(root), "<root>"))
+            for file in sorted((out / "templated").glob("*.json"))
+        }
+        return Resolved(hosts=hosts, failed=failed)
+
+    return run
