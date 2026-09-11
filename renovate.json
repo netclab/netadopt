@@ -2,5 +2,28 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "pyenv": {
+    "enabled": false
+  },
+  "git-submodules": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "matchManagers": [
+        "git-submodules"
+      ],
+      "groupName": "avd"
+    },
+    {
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchPackageNames": [
+        "pyavd"
+      ],
+      "groupName": "avd"
+    }
   ]
 }

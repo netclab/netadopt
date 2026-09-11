@@ -10,28 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import read_ansible_cfg
-from netadopt.inventory import Inventory, read_inventory
+from netadopt.inventory import Inventory
 from netadopt.playbook import find_playbooks, read_playbook
 from netadopt.varfiles import GROUP_VARS, INVENTORY_ROOT, read_vars
-
-
-@pytest.fixture(scope="session")
-def ansible() -> Ansible:
-    found = resolve_ansible()
-    if not found.usable:
-        pytest.skip(f"no Ansible to ask: {found.problem}")
-    return found
-
-
-@pytest.fixture
-def listed(ansible: Ansible, repo: Path, inventory_source: str | None) -> Inventory:
-    inventory = read_inventory(ansible, repo, inventory_source)
-    if not inventory.usable:
-        # no inventory of its own is a fact about the repository; problem says why
-        pytest.skip(f"no inventory: {inventory.problem}")
-    return inventory
 
 
 def test_every_vars_file_is_either_read_or_reported(repo: Path, inventory_source: str | None):

@@ -8,8 +8,9 @@ function beside `_avd_repos` and a second line in `_repos`, not a second file.
 No test file names an ecosystem: what they assert has to hold for any repository.
 Properties only, no counts -- a count goes red on somebody else's release.
 
-A checkout is named by an environment variable and these tests skip without one; the
-path is somebody's laptop, so it is not written down here.
+The corpus is the `avd` submodule of this repository, at the AVD release netadopt is
+tested on. An environment variable names another checkout instead; with neither
+checked out these tests skip.
 
 A molecule scenario says in molecule.yml how ansible-playbook runs it, and that is
 read rather than guessed from the directories: the -i it passes, and whether its
@@ -24,9 +25,17 @@ from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
+
+from netadopt.ansible import Ansible, resolve_ansible
+from netadopt.cli import app
+from netadopt.inventory import Inventory, read_inventory
 
 AVD_ENV = "NETADOPT_AVD"
 MOLECULE_FILE = "molecule.yml"
+
+# tests/corpus/conftest.py -> the repository root
+AVD_SUBMODULE = Path(__file__).resolve().parents[2] / "avd"
 
 # Where the collection sits inside a clone of aristanetworks/avd. A path pointing
 # straight at the collection works too, so either can be exported.
@@ -35,10 +44,7 @@ AVD_COLLECTION = Path("ansible_collections/arista/avd")
 
 def _avd_repos() -> list[tuple[str, Path]]:
     raw = os.environ.get(AVD_ENV)
-    if not raw:
-        return []
-
-    root = Path(raw).expanduser()
+    root = Path(raw).expanduser() if raw else AVD_SUBMODULE
     collection = next(
         (path for path in (root / AVD_COLLECTION, root) if (path / "examples").is_dir()),
         None,
@@ -91,7 +97,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     if not repos:
         # One skipped case rather than none: a suite that quietly collects nothing
         # reads as a suite that passed.
-        skip = pytest.mark.skip(reason=f"set {AVD_ENV} to a checkout to run the corpus tier")
+        skip = pytest.mark.skip(
+            reason=f"no AVD checkout: run `git submodule update --init`, or set {AVD_ENV}"
+        )
         metafunc.parametrize("repo", [pytest.param(None, marks=skip)])
         return
 
@@ -119,3 +127,40 @@ def inventory_source(repo: Path) -> str | None:
     if (repo / "inventory.yml").is_file():
         return "inventory.yml"
     return None
+
+
+@pytest.fixture(scope="session")
+def ansible() -> Ansible:
+    found = resolve_ansible()
+    if not found.usable:
+        pytest.skip(f"no Ansible to ask: {found.problem}")
+    return found
+
+
+@pytest.fixture
+def listed(ansible: Ansible, repo: Path, inventory_source: str | None) -> Inventory:
+    inventory = read_inventory(ansible, repo, inventory_source)
+    if not inventory.usable:
+        # no inventory of its own is a fact about the repository; problem says why
+        pytest.skip(f"no inventory: {inventory.problem}")
+    return inventory
+
+
+@pytest.fixture
+def playbook(repo: Path) -> str:
+    """The playbook the repository is built with: molecule's converge, else the file's."""
+    for name in (_molecule(repo).get("converge"), "converge.yml", "build.yml"):
+        if name and (repo / name).is_file():
+            return name
+    pytest.skip("no playbook the repository is built with")
+
+
+@pytest.fixture
+def emitted(repo: Path, playbook: str, inventory_source: str | None) -> list[dict]:
+    """What `emit` writes for the repository's first play."""
+    args = ["avd", "emit", str(repo), "--playbook", playbook]
+    if inventory_source:
+        args += ["--inventory", inventory_source]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.stderr
+    return list(yaml.safe_load_all(result.stdout))
