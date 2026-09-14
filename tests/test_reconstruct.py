@@ -6,14 +6,17 @@ import textwrap
 from collections import defaultdict
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from netadopt import ansible_yaml
+from netadopt.ansible import resolve_ansible
 from netadopt.ansible_yaml import VAULT_KEY
 from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.files import NamedFile
+from netadopt.inventory import read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import read_playbook
 from netadopt.pools import PoolFile
@@ -321,6 +324,47 @@ def test_emit_then_reconstruct_reads_back_the_same_through_every_reader(tmp_path
     assert _scopes(built.root, built.inventory, built.playbook) == _scopes(
         source, "inventory.yml", "build.yml"
     )
+
+
+BOTH_ROOTS = {
+    "inventory/hosts.yml": "all:\n  children:\n    FABRIC:\n      hosts:\n        dc1-spine1:\n",
+    "inventory/group_vars/FABRIC.yml": "fabric_name: FROM_INVENTORY\nonly_inventory: 1\n",
+    "build.yml": "- name: Build\n  hosts: FABRIC\n  gather_facts: false\n  tasks: []\n",
+    "group_vars/FABRIC.yml": "fabric_name: FROM_PLAYBOOK\nonly_playbook: 2\n",
+}
+
+
+def test_one_group_under_both_roots_resolves_as_ansible_ranks_them(tmp_path: Path):
+    # The playbook's group_vars outrank the inventory's for the same group, so the
+    # colliding key comes out of the root each FabricInput is reconstructed into.
+    found = resolve_ansible()
+    if not found.usable:
+        pytest.skip(f"no Ansible to ask: {found.problem}")
+    source = tmp_path / "both-roots"
+    for name, body in BOTH_ROOTS.items():
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+
+    result = CliRunner().invoke(
+        app, ["avd", "emit", str(source), "--playbook", "build.yml", "--inventory", "inventory/hosts.yml"]
+    )
+    assert result.exit_code == 0, result.stderr
+    built = reconstruct(yaml.safe_load_all(result.stdout), tmp_path / "rebuilt")
+    assert built.usable, built.problem
+
+    # ansible-inventory takes the working directory as the playbook's, and both
+    # playbooks sit at their repository's root.
+    expected = read_inventory(found, source, "inventory/hosts.yml")
+    got = read_inventory(found, built.root, built.inventory)
+    assert expected.usable, expected.problem
+    assert got.usable, got.problem
+    assert expected.hostvars["dc1-spine1"] == {
+        "fabric_name": "FROM_PLAYBOOK",
+        "only_inventory": 1,
+        "only_playbook": 2,
+    }
+    assert got.hostvars == expected.hostvars
 
 
 def _scopes(repo: Path, inventory: str, playbook: str) -> dict:

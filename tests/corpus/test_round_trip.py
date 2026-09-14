@@ -1,7 +1,8 @@
 """repo', rebuilt from what `emit` writes, as Ansible lists it.
 
-`ansible-inventory --list` on both sides: the groups, and every host's vars. The vars
-beside a playbook are not in that answer, so they are left to the fidelity test.
+`ansible-inventory --list` on both sides: the groups, and every host's vars. It runs in
+the repository's root and takes that as the playbook's directory, so the vars beside a
+playbook at the root are in that answer too.
 """
 
 from __future__ import annotations
