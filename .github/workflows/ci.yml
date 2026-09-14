@@ -9,8 +9,10 @@ on:
   pull_request:
   workflow_call:
 
+# A fixed name, not github.workflow: called from Release, github.workflow is
+# "Release", and a group equal to the caller's own cancels the caller.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
