@@ -29,8 +29,8 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      # Full version, not @v9: setup-uv publishes floating major aliases only up to
-      # v7, so @v9 does not resolve.
+      # The exact tag, not a major alias: setup-uv publishes floating major aliases
+      # only up to v7, so a later one does not resolve. Renovate bumps the tag.
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
