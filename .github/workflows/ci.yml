@@ -31,7 +31,7 @@ jobs:
 
       # Full version, not @v9: setup-uv publishes floating major aliases only up to
       # v7, so @v9 does not resolve.
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           enable-cache: true
 
