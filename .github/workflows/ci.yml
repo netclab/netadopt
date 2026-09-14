@@ -1,0 +1,40 @@
+name: CI
+
+# ruff and the whole suite, the corpus tier included. Release calls the same workflow,
+# so a version is published only after exactly these checks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ruff and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The corpus tier reads the avd submodule. Without it those tests skip, and
+          # the run would pass on the hermetic tests alone.
+          submodules: true
+          fetch-depth: 1
+
+      # Full version, not @v9: setup-uv publishes floating major aliases only up to
+      # v7, so @v9 does not resolve.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+      - run: uvx ruff check
+      - run: uv run pytest -q

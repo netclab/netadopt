@@ -1,0 +1,60 @@
+name: Release
+
+# A tag v* publishes netadopt to PyPI, then makes the GitHub Release. The Release comes
+# last, so one exists only for a version PyPI has.
+#
+# The version is pyproject.toml's, and the tag is checked against it.
+#
+# PyPI trusts this workflow through Trusted Publishing, so no token is stored. The
+# publisher is registered on pypi.org as: project netadopt, owner netclab, repository
+# netadopt, workflow release.yml, environment pypi.
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: PyPI, then the GitHub Release
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/netadopt/
+    permissions:
+      contents: write  # the GitHub Release
+      id-token: write  # Trusted Publishing
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: The tag is pyproject.toml's version
+        run: |
+          set -euo pipefail
+          version="v$(uv version --short)"
+          if [[ "${GITHUB_REF_NAME}" != "${version}" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} is not pyproject.toml's version ${version}"
+            exit 1
+          fi
+
+      - run: uv build
+      - run: uv publish --trusted-publishing always
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --verify-tag --generate-notes
