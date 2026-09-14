@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import shlex
 from collections import Counter
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from netadopt import AVD_TESTED
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
 from netadopt.files import find_named_files
@@ -44,6 +46,22 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+def _version(value: bool) -> None:
+    if value:
+        typer.echo(f"netadopt {version('netadopt')} (avd: tested on {AVD_TESTED})")
+        raise typer.Exit(0)
+
+
+@app.callback()
+def _root(
+    _: Annotated[
+        bool,
+        typer.Option("--version", callback=_version, is_eager=True, help="print the version"),
+    ] = False,
+) -> None:
+    pass
+
 
 avd = typer.Typer(help="An Arista AVD repository.", no_args_is_help=True)
 app.add_typer(avd, name="avd")
@@ -119,7 +137,8 @@ def emit(
     """Write the Fabric and FabricInput objects of the repository, as YAML.
 
     The objects go to stdout and everything else to stderr, so the stream pipes into
-    `kubectl apply -f -` whether or not there was something to say.
+    `kubectl apply --server-side -f -` whether or not there was something to say.
+    Server-side: a plain apply drops every explicit null in a map.
     """
     wanted = name or repo.resolve().name
     spelled = rfc1123(wanted)

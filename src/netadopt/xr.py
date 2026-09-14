@@ -264,7 +264,7 @@ _Dumper.add_representer(str, _str)
 
 
 def to_yaml(documents: tuple[dict, ...]) -> str:
-    """The documents as one stream, ready for `kubectl apply -f -`; long lines never folded."""
+    """The documents as one stream, ready for `kubectl apply --server-side -f -`; long lines never folded."""
     return yaml.dump_all(
         documents, Dumper=_Dumper, sort_keys=False, explicit_start=True, width=float("inf")
     )
