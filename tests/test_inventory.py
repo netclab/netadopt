@@ -70,6 +70,15 @@ def test_groups_and_hostvars_come_back_split(install, tmp_path):
     assert "_meta" not in listed.groups  # Ansible's own key, not a group
 
 
+def test_a_host_with_no_vars_is_still_a_host(install, tmp_path):
+    listed_json = {"_meta": {"hostvars": {}}, "all": {"children": ["FABRIC"]}, "FABRIC": {"hosts": ["h1"]}}
+    ansible = install(json.dumps(listed_json))
+
+    listed = read_inventory(ansible, tmp_path)
+
+    assert listed.hosts == ("h1",)
+
+
 def test_it_runs_in_the_repository_because_that_is_where_ansible_cfg_is(install, tmp_path):
     ansible = install(json.dumps(LISTED))
     repo = tmp_path / "repo"

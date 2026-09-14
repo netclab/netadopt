@@ -22,7 +22,10 @@ from pathlib import Path
 import yaml
 
 from netadopt import ansible_yaml
+from netadopt.repocode import is_script
 from netadopt.varfiles import SKIPPED, SUFFIXES
+
+ONLY_YAML = "only a YAML inventory file is carried"
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,10 @@ def _is_source(path: Path) -> bool:
 
 
 def _read(path: Path) -> InventoryFile:
+    # Before YAML: a script can parse as a YAML string and would be named as one.
+    if is_script(path):
+        return InventoryFile(path=path, problem=f"{path} is an executable inventory -- {ONLY_YAML}")
+
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as err:
@@ -81,9 +88,10 @@ def _read(path: Path) -> InventoryFile:
         loaded = ansible_yaml.load(text, path)
     except yaml.YAMLError as err:
         # An INI inventory lands here, and so does a plugin configuration.
-        return InventoryFile(path=path, problem=f"{path} is not readable as YAML: {err}")
+        detail = str(err).splitlines()[0]
+        return InventoryFile(path=path, problem=f"{path} is not YAML ({detail}) -- {ONLY_YAML}")
 
     if not isinstance(loaded, dict):
         what = "empty" if loaded is None else f"{type(loaded).__name__}, not a mapping"
-        return InventoryFile(path=path, problem=f"{path} is {what}")
+        return InventoryFile(path=path, problem=f"{path} is {what} -- {ONLY_YAML}")
     return InventoryFile(path=path, groups=loaded)

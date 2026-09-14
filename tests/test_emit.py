@@ -351,3 +351,16 @@ def test_a_vars_file_that_did_not_read_is_named_and_fails_the_run(repo):
 
     assert result.exit_code == 2
     assert "FABRIC.yml: not emitted -- is str, not a mapping" in result.stderr
+
+
+def test_a_code_directory_ansible_cfg_names_is_not_carried_and_fails_the_run(repo):
+    (repo / "ansible.cfg").write_text("[defaults]\ninventory=inventory.yml\nvars_plugins=plugins/vars\n")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 2
+    assert documents[0]["spec"]["ansibleCfg"]["defaults"]["vars_plugins"] == "plugins/vars"
+    assert (
+        "not carried: plugins/vars, named by vars_plugins in ansible.cfg -- "
+        "missing from the rebuilt repository"
+    ) in result.stderr

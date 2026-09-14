@@ -42,7 +42,17 @@ class Inventory:
 
     @property
     def hosts(self) -> tuple[str, ...]:
-        return tuple(self.hostvars)
+        """Every host a group holds, and every host with vars.
+
+        `--list` leaves a host with no vars out of hostvars, so hostvars alone
+        undercounts.
+        """
+        named: dict[str, None] = {}
+        for group in self.groups.values():
+            if isinstance(group, dict):
+                named.update(dict.fromkeys(group.get("hosts") or []))
+        named.update(dict.fromkeys(self.hostvars))
+        return tuple(named)
 
 
 def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> Inventory:

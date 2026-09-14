@@ -27,6 +27,7 @@ from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.playbook import IMPORT_ROLE, Play, Playbook, find_playbooks, read_playbook
 from netadopt.pools import Pools, find_pools
+from netadopt.repocode import Code, code_directories, find_code
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
 from netadopt.xr import (
     CONFIG_MAP,
@@ -106,6 +107,7 @@ class Adoption:
     pools: Pools = field(default_factory=Pools)
     named: Named = field(default_factory=Named)
     documents: tuple[dict, ...] = ()  # the Fabric, then the ConfigMaps it names
+    uncarried_code: tuple[Code, ...] = ()  # code directories ansible.cfg names; never carried
     problem: str | None = None  # why there is no Fabric
 
     @property
@@ -164,6 +166,7 @@ def _adopt(
         pools=pools,
         named=named,
         documents=(document, *config_maps),
+        uncarried_code=code_directories(repo, config),
     )
 
 
@@ -181,6 +184,7 @@ def report(
     source = _inventory_source(inventory, config)
     var_files = read_vars(repo, source, playbook)
     read = read_playbook(repo, playbook) if playbook else None
+    code = find_code(repo, config, (inventory,) if inventory else config.inventory)
 
     # What emit carries with no --play and no --name: play 0, under the directory's name.
     name = rfc1123(repo.resolve().name) or "fabric"
@@ -211,12 +215,22 @@ def report(
             # on a line of its own, never wrapped, so that it can be copied
             command = _vault_secret_command(repo, adoption)
             console.print(f"    {command}", soft_wrap=True, markup=False)
-    _print_section(console, "Warnings", "yellow", _warnings(repo, listed, var_files, inputs, adoption))
+    warnings = _warnings(repo, code, listed, var_files, inputs, adoption)
+    _print_section(console, "Warnings", "yellow", warnings)
 
     if not found.usable:
         raise typer.Exit(1)  # no Ansible
-    if read is None or not read.usable or not listed.usable or not config.usable:
-        raise typer.Exit(2)  # no playbook named, or it, the inventory or ansible.cfg did not read
+    unreadable = read is None or not read.usable or not listed.usable or not config.usable
+    # Other plays and the vault password are left out by design; these are model parts missing.
+    incomplete = (
+        not adoption
+        or not adoption.documents
+        or adoption.uncarried_code
+        or var_files.problems
+        or inputs.problems
+    )
+    if unreadable or incomplete:
+        raise typer.Exit(2)
     raise typer.Exit(0)
 
 
@@ -290,7 +304,7 @@ def emit(
     if not inputs.documents:
         typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
-    if not adoption.documents or found.problems or inputs.problems:
+    if not adoption.documents or adoption.uncarried_code or found.problems or inputs.problems:
         raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
 
@@ -313,6 +327,11 @@ def _emit_notes(repo: Path, adoption: Adoption) -> list[str]:
             "spec.vaultPassword names the Secret, create it:"
         )
         said.append(f"  {_vault_secret_command(repo, adoption)}")
+    for piece in adoption.uncarried_code:
+        said.append(
+            f"not carried: {piece.path}, named by {piece.setting} in ansible.cfg -- "
+            "missing from the rebuilt repository"
+        )
     return said + list(adoption.pools.notes) + list(adoption.named.notes)
 
 
@@ -487,6 +506,10 @@ def _not_carried(
     if adoption.vault_file:
         rows.append((adoption.vault_file, "the vault password; create its Secret:"))
 
+    for piece in adoption.uncarried_code:
+        why = f"named by {piece.setting} in ansible.cfg; missing from the rebuilt repository"
+        rows.append((piece.path, why))
+
     for file in found.problems:
         rows.append((_relative(file.path, repo), file.problem or ""))
     for note in adoption.pools.notes:
@@ -498,12 +521,20 @@ def _not_carried(
 
 def _warnings(
     repo: Path,
+    code: tuple[Code, ...],
     listed: Inventory,
     found: VarFiles,
     inputs: Emitted,
     adoption: Adoption | None,
 ) -> list[tuple[str, ...]]:
     rows: list[tuple[str, ...]] = []
+
+    # First: Ansible has already run this code to answer the report.
+    for piece in code:
+        if piece.setting is None:
+            rows.append((piece.path, "an executable inventory, run whenever Ansible reads it"))
+        else:
+            rows.append((piece.path, f"code Ansible loads, named by {piece.setting} in ansible.cfg"))
 
     fabric_documents = adoption.documents if adoption else ()
     for where, names in plain_passwords(fabric_documents + inputs.documents):

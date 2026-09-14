@@ -163,6 +163,29 @@ def test_without_a_playbook_the_candidates_are_named_and_nothing_is_carried(repo
     assert section(result.output, "Carried") == []
 
 
+def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo, ansible):
+    write(repo, {"ansible.cfg": "[defaults]\ninventory=inventory.yml\nvars_plugins=plugins/vars\n"})
+
+    result = report(repo, ansible(), "--playbook", "build.yml")
+
+    assert "plugins/vars code Ansible loads, named by vars_plugins in ansible.cfg" in section(
+        result.output, "Warnings"
+    )
+    assert (
+        "plugins/vars named by vars_plugins in ansible.cfg; missing from the rebuilt repository"
+        in section(result.output, "Not carried")
+    )
+    assert result.exit_code == 2
+
+
+def test_a_part_of_the_model_not_carried_fails_the_report(repo, ansible):
+    write(repo, {"group_vars/FABRIC.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n"})
+
+    result = report(repo, ansible(), "--playbook", "build.yml")
+
+    assert result.exit_code == 2
+
+
 def test_what_ansible_writes_in_brackets_is_printed_as_written(repo, ansible):
     warning = "[WARNING]: Found both group and host with same name: all"
 

@@ -108,3 +108,13 @@ def test_a_missing_inventory_names_the_path(repo):
 
     assert not found.usable
     assert "nope.yml" in found.problem
+
+
+def test_an_executable_inventory_is_named_as_one(tmp_path):
+    script = tmp_path / "inventory.py"
+    script.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps({}))\n")
+    script.chmod(0o755)
+
+    found = read_inventory_file(tmp_path, "inventory.py")
+
+    assert "is an executable inventory -- only a YAML inventory file is carried" in found.problem
