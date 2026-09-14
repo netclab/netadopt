@@ -204,8 +204,7 @@ def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
     problems: list[str] = []
 
     for file in found.files:
-        if file.data is None:
-            notes.append(f"{file.path}: not emitted -- {file.problem}")
+        if file.data is None:  # a file that did not read is in found.problems
             continue
 
         design = designs.setdefault((file.root, file.vars_dir, file.scope), {})

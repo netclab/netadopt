@@ -342,3 +342,12 @@ def test_no_playbook_named_still_emits_the_inputs_and_says_so(repo):
     assert result.exit_code == 2
     assert [doc["kind"] for doc in documents] == ["FabricInput"]
     assert "--playbook" in result.stderr
+
+
+def test_a_vars_file_that_did_not_read_is_named_and_fails_the_run(repo):
+    (repo / "group_vars" / "FABRIC.yml").write_text("$ANSIBLE_VAULT;1.1;AES256\n6162\n")
+
+    result, _ = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 2
+    assert "FABRIC.yml: not emitted -- is str, not a mapping" in result.stderr

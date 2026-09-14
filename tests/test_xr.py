@@ -147,7 +147,7 @@ def test_a_suffix_that_makes_a_name_too_long_is_refused_too():
     assert len(emitted.problems) == 1
 
 
-def test_a_file_that_did_not_read_is_not_emitted_and_is_named():
+def test_a_file_that_did_not_read_is_not_emitted():
     found = VarFiles(
         files=(
             one("SECRET.yml", "SECRET", problem="is str, not a mapping"),
@@ -158,7 +158,7 @@ def test_a_file_that_did_not_read_is_not_emitted_and_is_named():
     emitted = fabric_inputs(found, NAME)
 
     assert [doc["metadata"]["name"] for doc in emitted.documents] == ["lab-fabric"]
-    assert any("SECRET.yml" in note for note in emitted.notes)
+    assert emitted.notes == ()
 
 
 def test_every_object_says_which_root_its_files_sat_in():
