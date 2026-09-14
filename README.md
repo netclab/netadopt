@@ -146,4 +146,4 @@ with the same variables.
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](https://github.com/netclab/netadopt/blob/main/LICENSE)
