@@ -20,9 +20,10 @@ or to install it:
 uv tool install "netadopt[avd]"
 ```
 
-The `avd` extra brings the ansible-core and pyavd netadopt runs with, at the AVD
-release `netadopt --version` names. netadopt uses only those; it never looks for an
-Ansible on `PATH`.
+The `avd` extra installs everything netadopt needs to run AVD: ansible-core, pyavd,
+and the two libraries AVD requires with them, distlib and netaddr. pyavd is pinned to
+the AVD version shown by `netadopt --version`. netadopt uses only this Ansible; one
+already installed elsewhere on the machine is not used.
 
 ## Reading an AVD repository
 
@@ -32,7 +33,7 @@ Run on AVD's `single-dc-l3ls` example:
 $ netadopt avd report single-dc-l3ls --playbook build.yml
 single-dc-l3ls
 
-Ansible     ansible-core 2.21.3    ~/.local/share/uv/tools/netadopt/bin/ansible-playbook
+Ansible     ansible-core 2.21.4    ~/.local/share/uv/tools/netadopt/bin/ansible-playbook
 Config      ansible.cfg
 Inventory   named by ansible.cfg   8 hosts, 8 groups
 Variables   8 files                group_vars 8, host_vars 0
