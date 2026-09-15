@@ -8,28 +8,21 @@ The objects carry the repository's inventory, play and vars exactly as written.
 
 ## Installing
 
-With [uv](https://docs.astral.sh/uv/):
+With [uv](https://docs.astral.sh/uv/), to run it once without installing:
 
 ```
-uv tool install netadopt
+uvx "netadopt[avd]" avd report ./repo --playbook build.yml
 ```
 
-or, to run it once without installing:
+or to install it:
 
 ```
-uvx netadopt avd report ./repo --playbook build.yml
+uv tool install "netadopt[avd]"
 ```
 
-netadopt uses the Ansible already on `PATH`. On a machine without one, the `ansible`
-extra brings ansible-core along:
-
-```
-uv tool install "netadopt[ansible]"
-```
-
-```
-uvx "netadopt[ansible]" avd report ./repo --playbook build.yml
-```
+The `avd` extra brings the ansible-core and pyavd netadopt runs with, at the AVD
+release `netadopt --version` names. netadopt uses only those; it never looks for an
+Ansible on `PATH`.
 
 ## Reading an AVD repository
 
@@ -39,7 +32,7 @@ Run on AVD's `single-dc-l3ls` example:
 $ netadopt avd report single-dc-l3ls --playbook build.yml
 single-dc-l3ls
 
-Ansible     ansible-core 2.21.3    ~/.local/bin/ansible-playbook
+Ansible     ansible-core 2.21.3    ~/.local/share/uv/tools/netadopt/bin/ansible-playbook
 Config      ansible.cfg
 Inventory   named by ansible.cfg   8 hosts, 8 groups
 Variables   8 files                group_vars 8, host_vars 0
@@ -71,7 +64,8 @@ Warnings
   for a host the inventory does not have.
 
 Exit codes: `0` when the model is carried whole, warnings or not; `2` when a part of
-it is not carried or something did not read; `1` when there is no Ansible at all.
+it is not carried or something did not read; `1` when netadopt was installed without
+the `avd` extra, and then nothing else is reported.
 
 ## Writing Kubernetes manifests
 

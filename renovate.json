@@ -21,6 +21,7 @@
         "pep621"
       ],
       "matchPackageNames": [
+        "ansible-core",
         "pyavd"
       ],
       "groupName": "avd"

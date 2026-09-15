@@ -28,13 +28,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# For a machine with no pipeline of its own: `uvx "netadopt[ansible]" ./repo`.
-# PATH is still preferred at run time -- see netadopt.ansible.resolve_ansible.
+# The only way netadopt finds Ansible: installed beside it, as
+# `uvx "netadopt[avd]" avd <verb> ./repo` does -- see netadopt.ansible.resolve_ansible.
 #
-# Unbounded on purpose. Each ecosystem states its own ansible-core window in its
-# collection's meta/runtime.yml and moves it over time; that number is read from the
-# repository at run time and reported, never frozen here.
-ansible = ["ansible-core"]
+# Bounded by the AVD netadopt is tested on, the `avd` submodule: ansible-core within
+# its meta/runtime.yml `requires_ansible`, pyavd at its version, and distlib and netaddr
+# from its requirements.txt, whose check refuses to run without them.
+avd = [
+    "ansible-core>=2.16,<2.22",
+    "distlib>=0.3.9",
+    "netaddr>=0.7.19",
+    "pyavd==6.4.0",
+]
 
 [project.urls]
 Repository = "https://github.com/netclab/netadopt"
@@ -50,8 +55,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "netadopt[ansible]",
-    "pyavd==6.4.0",
+    "netadopt[avd]",
     "pytest>=9.1.1",
 ]
 

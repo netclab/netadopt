@@ -1,16 +1,17 @@
 """Finding the Ansible to run.
 
-PATH first, the `ansible` extra behind it; `source` says which one answered.
-The answer is always a value -- never an exception, never sys.exit.
+Only the ansible-playbook installed beside this interpreter -- by the `avd` extra, or
+in the same environment as netadopt. Never PATH, so which Ansible answered is never a
+question. The answer is always a value -- never an exception, never sys.exit.
 """
 
 from __future__ import annotations
 
+import os
 import re
-import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 # Probed rather than `ansible`: it is the one being run, and on a broken install the
@@ -31,7 +32,6 @@ class Ansible:
     config_file: str | None = None
     collections: tuple[str, ...] = ()
     problem: str | None = None  # set if and only if unusable
-    source: str | None = None  # "given" | "PATH" | "bundled"
 
     @property
     def usable(self) -> bool:
@@ -47,27 +47,15 @@ class Ansible:
         found = Path(self.exe).with_name(name)
         return found if found.exists() else None
 
-    @property
-    def bundled(self) -> bool:
-        """True when the fallback answered, and not an Ansible already installed."""
-        return self.source == "bundled"
 
-
-def find_ansible(exe: str | None = None) -> Ansible:
-    """Locate an ansible-playbook and read its --version.
-
-    `exe` overrides PATH -- a name or a path; a venv is selected by pointing here.
-    """
-    target = exe or PLAYBOOK_EXE
-    found = shutil.which(target)
-    if found is None:
-        # a typed path and a name looked up on PATH fail for different reasons
-        where = "not found" if Path(target).name != target else "not found on PATH"
-        return Ansible(problem=f"{target} {where}")
+def find_ansible(exe: str) -> Ansible:
+    """Read the --version of the ansible-playbook at the path `exe`."""
+    if not Path(exe).is_file() or not os.access(exe, os.X_OK):
+        return Ansible(problem=f"{exe} not found")
 
     try:
         done = subprocess.run(
-            [found, "--version"],
+            [exe, "--version"],
             check=False,
             capture_output=True,
             text=True,
@@ -76,33 +64,23 @@ def find_ansible(exe: str | None = None) -> Ansible:
             stdin=subprocess.DEVNULL,
         )
     except OSError as err:  # not executable, wrong architecture, bad interpreter
-        return Ansible(exe=found, problem=f"{found} could not be run: {err}")
+        return Ansible(exe=exe, problem=f"{exe} could not be run: {err}")
     except subprocess.TimeoutExpired:
-        return Ansible(exe=found, problem=f"{found} --version did not return in 60s")
+        return Ansible(exe=exe, problem=f"{exe} --version did not return in 60s")
 
     if done.returncode != 0:
         # an install broken by its own dependencies fails here; its stderr, whole
         detail = (done.stderr or done.stdout).strip() or f"exit {done.returncode}"
-        return Ansible(exe=found, problem=f"{found} --version failed: {detail}")
+        return Ansible(exe=exe, problem=f"{exe} --version failed: {detail}")
 
-    return _parse(found, done.stdout)
+    return _parse(exe, done.stdout)
 
 
-def resolve_ansible(exe: str | None = None) -> Ansible:
-    """PATH first, the bundled ansible-core second."""
-    if exe:
-        return replace(find_ansible(exe), source="given")
-
-    found = find_ansible()
-    if found.usable:
-        return replace(found, source="PATH")
-
-    # The extra installs ansible-playbook beside this interpreter. Under uvx that
-    # directory need not be on PATH, so it is found by location and not by name.
-    bundled = Path(sys.executable).parent / PLAYBOOK_EXE
-    if not bundled.exists():
-        return found  # keep the PATH problem: with no fallback it is the one to report
-    return replace(find_ansible(str(bundled)), source="bundled")
+def resolve_ansible() -> Ansible:
+    """The ansible-playbook installed beside this interpreter."""
+    # Under uvx that directory need not be on PATH, so it is found by location and
+    # not by name.
+    return find_ansible(str(Path(sys.executable).parent / PLAYBOOK_EXE))
 
 
 def _parse(exe: str, out: str) -> Ansible:

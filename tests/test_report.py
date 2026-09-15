@@ -64,30 +64,32 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def ansible(tmp_path: Path):
-    """A pretend Ansible: ansible-playbook says its version, and ansible-inventory
-    lists LISTED and writes `stderr`. Returns the ansible-playbook to pass."""
+def ansible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A pretend Ansible installed beside the interpreter, as the avd extra installs it:
+    ansible-playbook says its version, and ansible-inventory lists LISTED and writes
+    `stderr`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    interpreter = sys.executable  # captured now; make() replaces sys.executable
 
-    def make(stderr: str = "") -> str:
+    def make(stderr: str = "") -> None:
         playbook = bin_dir / "ansible-playbook"
-        playbook.write_text(f"#!{sys.executable}\nprint('ansible-playbook [core 2.21.3]')\n")
+        playbook.write_text(f"#!{interpreter}\nprint('ansible-playbook [core 2.21.3]')\n")
         inventory = bin_dir / "ansible-inventory"
         inventory.write_text(
-            f"#!{sys.executable}\nimport sys\n"
+            f"#!{interpreter}\nimport sys\n"
             f"sys.stdout.write({json.dumps(LISTED)!r})\n"
             f"sys.stderr.write({stderr!r})\n"
         )
         for exe in (playbook, inventory):
             exe.chmod(0o755)
-        return str(playbook)
+        monkeypatch.setattr(sys, "executable", str(bin_dir / "python"))
 
     return make
 
 
-def report(repo: Path, ansible: str, *args: str):
-    return CliRunner().invoke(app, ["avd", "report", str(repo), "--ansible", ansible, *args])
+def report(repo: Path, *args: str):
+    return CliRunner().invoke(app, ["avd", "report", str(repo), *args])
 
 
 def squeezed(lines: list[str]) -> list[str]:
@@ -105,7 +107,8 @@ def section(output: str, title: str) -> list[str]:
 
 
 def test_what_emit_carries_is_under_carried(repo, ansible):
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert result.exit_code == 0, result.output
     assert section(result.output, "Carried") == [
@@ -117,7 +120,8 @@ def test_what_emit_carries_is_under_carried(repo, ansible):
 def test_another_play_and_the_vault_password_are_under_not_carried(repo, ansible):
     write(repo, {"ansible.cfg": "[defaults]\ninventory=inventory.yml\nvault_password_file=.vault\n"})
 
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert section(result.output, "Not carried") == [
         "play 1 each a separate run: --play N --name NAME",
@@ -129,7 +133,8 @@ def test_another_play_and_the_vault_password_are_under_not_carried(repo, ansible
 def test_a_vars_file_that_did_not_read_is_not_carried(repo, ansible):
     write(repo, {"group_vars/FABRIC.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n"})
 
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert "group_vars/FABRIC.yml is str, not a mapping" in section(result.output, "Not carried")
 
@@ -137,7 +142,8 @@ def test_a_vars_file_that_did_not_read_is_not_carried(repo, ansible):
 def test_a_host_vars_file_for_no_host_is_a_warning(repo, ansible):
     write(repo, {"host_vars/all.yml": "root_dir: '{{ playbook_dir }}'\n"})
 
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert "host_vars/all.yml all is no host in the inventory" in section(result.output, "Warnings")
 
@@ -145,7 +151,8 @@ def test_a_host_vars_file_for_no_host_is_a_warning(repo, ansible):
 def test_a_plain_text_password_is_a_warning(repo, ansible):
     write(repo, {"group_vars/FABRIC.yml": "fabric_name: FABRIC\nansible_password: arista\n"})
 
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert (
         "ansible_password plain text in FabricInput single-dc-l3ls-fabric, "
@@ -154,7 +161,8 @@ def test_a_plain_text_password_is_a_warning(repo, ansible):
 
 
 def test_without_a_playbook_the_candidates_are_named_and_nothing_is_carried(repo, ansible):
-    result = report(repo, ansible())
+    ansible()
+    result = report(repo)
 
     assert result.exit_code == 2
     assert "Playbook not named name one with --playbook: build.yml" in squeezed(
@@ -166,7 +174,8 @@ def test_without_a_playbook_the_candidates_are_named_and_nothing_is_carried(repo
 def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo, ansible):
     write(repo, {"ansible.cfg": "[defaults]\ninventory=inventory.yml\nvars_plugins=plugins/vars\n"})
 
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert "plugins/vars code Ansible loads, named by vars_plugins in ansible.cfg" in section(
         result.output, "Warnings"
@@ -181,14 +190,27 @@ def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo,
 def test_a_part_of_the_model_not_carried_fails_the_report(repo, ansible):
     write(repo, {"group_vars/FABRIC.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n"})
 
-    result = report(repo, ansible(), "--playbook", "build.yml")
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
 
     assert result.exit_code == 2
+
+
+def test_with_no_ansible_beside_it_only_that_is_said(repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "env" / "python"))
+
+    result = report(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert 'no Ansible: ' in result.stderr
+    assert 'install as: uvx "netadopt[avd]"' in result.stderr
 
 
 def test_what_ansible_writes_in_brackets_is_printed_as_written(repo, ansible):
     warning = "[WARNING]: Found both group and host with same name: all"
 
-    result = report(repo, ansible(stderr=warning + "\n"), "--playbook", "build.yml")
+    ansible(stderr=warning + "\n")
+    result = report(repo, "--playbook", "build.yml")
 
     assert warning in result.output

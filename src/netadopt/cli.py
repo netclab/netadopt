@@ -86,9 +86,6 @@ PlaybookOption = Annotated[
 InventoryOption = Annotated[
     str | None, typer.Option(metavar="SOURCE", help="inventory file or directory, as -i")
 ]
-AnsibleOption = Annotated[
-    str | None, typer.Option(metavar="EXE", help="ansible-playbook to use, overriding PATH")
-]
 # By position, as the report prints it.
 PlayOption = Annotated[int, typer.Option(metavar="N", help="play to carry, by its index")]
 NameOption = Annotated[
@@ -175,10 +172,14 @@ def report(
     repo: Repo,
     playbook: PlaybookOption = None,
     inventory: InventoryOption = None,
-    ansible: AnsibleOption = None,
 ) -> None:
     """Say what is in the repository, and what emit carries of it."""
-    found = resolve_ansible(ansible)
+    found = resolve_ansible()
+    if not found.usable:
+        # An install without the extra, not a fact about the repository: a report
+        # without Ansible would skip checks and still read as whole.
+        typer.echo(f"no Ansible: {found.problem} -- install as: uvx \"netadopt[avd]\" ...", err=True)
+        raise typer.Exit(1)
     config = read_ansible_cfg(repo)
     listed = read_inventory(found, repo, inventory)
     source = _inventory_source(inventory, config)
@@ -197,7 +198,7 @@ def report(
     console.print(Text(repo.resolve().name, style="bold"))
     console.print()
     overview = [
-        *_ansible_rows(found),
+        _ansible_row(found),
         _config_row(config),
         *_inventory_rows(listed),
         _vars_row(var_files),
@@ -218,8 +219,6 @@ def report(
     warnings = _warnings(repo, code, listed, var_files, inputs, adoption)
     _print_section(console, "Warnings", "yellow", warnings)
 
-    if not found.usable:
-        raise typer.Exit(1)  # no Ansible
     unreadable = read is None or not read.usable or not listed.usable or not config.usable
     # Other plays and the vault password are left out by design; these are model parts missing.
     incomplete = (
@@ -399,17 +398,8 @@ def _count(number: int, one: str) -> str:
     return f"{number} {one if number == 1 else one + 's'}"
 
 
-def _ansible_rows(found: Ansible) -> list[tuple[str, ...]]:
-    if not found.usable:
-        return [
-            ("Ansible", "not usable", found.problem or ""),
-            ("", "", 'install Ansible, or run: uvx "netadopt[ansible]" ...'),
-        ]
-
-    rows = [("Ansible", f"ansible-core {found.core}", found.exe or "")]
-    if found.bundled:
-        rows.append(("", "", "the bundled ansible-core, not the Ansible the repository is run with"))
-    return rows
+def _ansible_row(found: Ansible) -> tuple[str, ...]:
+    return ("Ansible", f"ansible-core {found.core}", found.exe or "")
 
 
 def _config_row(config: AnsibleCfg) -> tuple[str, ...]:

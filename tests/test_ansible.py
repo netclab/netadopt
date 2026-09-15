@@ -30,13 +30,14 @@ ansible-playbook [core 2.16.3]
 def stub(tmp_path: Path):
     """Write an executable that prints and exits as the test says.
 
-    A Python script with an absolute shebang, not a shell script: several tests empty
-    PATH, so a /bin/sh stub calling `cat` would fail for an unrelated reason.
+    A Python script with an absolute shebang, not a shell script: it must run whatever
+    PATH a test sets, and a test may replace sys.executable.
     """
     interpreter = sys.executable  # captured now; a test may replace sys.executable
 
-    def make(stdout: str = "", stderr: str = "", code: int = 0, name="ansible-playbook") -> str:
-        path = tmp_path / name
+    def make(stdout: str = "", stderr: str = "", code: int = 0, where: Path = tmp_path) -> str:
+        where.mkdir(parents=True, exist_ok=True)
+        path = where / "ansible-playbook"
         path.write_text(
             f"#!{interpreter}\n"
             "import sys\n"
@@ -96,55 +97,32 @@ def test_a_broken_install_reports_its_own_stderr(stub):
     assert message in found.problem
 
 
-def test_a_name_and_a_path_fail_differently(tmp_path, monkeypatch):
-    # a typed path and a name looked up on PATH fail for different reasons
-    monkeypatch.setenv("PATH", str(tmp_path))
+def test_a_missing_path_is_named():
+    found = find_ansible("/nowhere/ansible-playbook")
 
-    assert find_ansible().problem.endswith("not found on PATH")
-    assert find_ansible("/nowhere/ansible-playbook").problem.endswith("not found")
-    assert not find_ansible("/nowhere/ansible-playbook").problem.endswith("on PATH")
+    assert not found.usable
+    assert found.problem == "/nowhere/ansible-playbook not found"
 
 
-def test_the_ansible_on_path_wins(stub, tmp_path, monkeypatch):
-    stub(REAL)
-    monkeypatch.setenv("PATH", str(tmp_path))
-
-    found = resolve_ansible()
-
-    assert found.source == "PATH"
-    assert not found.bundled
-    assert found.core == "2.16.3"  # the stub answered, not some ansible on the box
-
-
-def test_an_explicit_exe_is_neither_path_nor_bundled(stub, tmp_path, monkeypatch):
-    monkeypatch.setenv("PATH", str(tmp_path))
-
-    found = resolve_ansible(stub(REAL, name="somewhere-else"))
-
-    assert found.source == "given"
-    assert not found.bundled
-
-
-def test_the_bundled_one_is_used_only_when_path_has_none(stub, tmp_path, monkeypatch):
-    # The extra installs ansible-playbook beside this interpreter, which need not be
-    # on PATH -- so it is found by location, not by name.
+def test_the_one_beside_the_interpreter_answers(stub, tmp_path, monkeypatch):
+    # Under uvx the environment's bin need not be on PATH, so it is found by location.
     stub(REAL)
     monkeypatch.setenv("PATH", "")
     monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
 
     found = resolve_ansible()
 
-    assert found.source == "bundled"
+    assert found.usable
     assert found.core == "2.16.3"
-    assert found.bundled  # the report has to say which one answered
+    assert found.exe == str(tmp_path / "ansible-playbook")
 
 
-def test_with_nothing_anywhere_the_path_problem_is_the_one_reported(tmp_path, monkeypatch):
-    monkeypatch.setenv("PATH", "")
-    monkeypatch.setattr(sys, "executable", str(tmp_path / "python"))
+def test_an_ansible_on_path_is_never_asked(stub, tmp_path, monkeypatch):
+    on_path = stub(REAL, where=tmp_path / "on-path")
+    monkeypatch.setenv("PATH", str(Path(on_path).parent))
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "env" / "python"))
 
     found = resolve_ansible()
 
     assert not found.usable
-    assert found.source is None
-    assert "on PATH" in found.problem  # not "the bundled one is missing"
+    assert found.problem == f"{tmp_path / 'env' / 'ansible-playbook'} not found"
