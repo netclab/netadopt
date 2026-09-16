@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -38,6 +39,7 @@ from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.galaxy import ensure_collections
 from netadopt.inventory import Inventory, read_inventory
+from netadopt.lab import Lab, netclab_values, values_yaml
 from netadopt.playbook import IMPORT_PLAYBOOK_KEYS, TASK_KEYS, read_playbook
 from netadopt.reconstruct import Reconstructed, reconstruct
 from netadopt.render import Rendered, render
@@ -250,6 +252,71 @@ def rendered(
         # A skip reason is read in a one-line summary, and Ansible names every host.
         pytest.skip(f"nothing rendered: {out.problem.splitlines()[0]}")
     return out
+
+
+@pytest.fixture
+def lab(rendered: Rendered) -> Lab:
+    """The values for the repository's fabric. Nothing reads them without this."""
+    built = netclab_values(rendered.hosts)
+    assert built.problem is None, built.problem
+    return built
+
+
+# netclab-chart, and helm, judge the values the way Ansible judges the model: by
+# consuming them. Both are named by the environment, so neither is a dependency of the
+# suite and neither is a path written into a test.
+CHART_ENV = "NETADOPT_NETCLAB_CHART"
+HELM_EXE = "helm"
+# The chart refuses to render unless Multus's CRD is in the cluster, and there is none.
+HELM_API_VERSIONS = "k8s.cni.cncf.io/v1"
+HELM_RELEASE = "lab"
+HELM_TIMEOUT = 120
+
+
+@pytest.fixture(scope="session")
+def chart() -> tuple[str, Path]:
+    """helm, and a checkout of netclab-chart, or the reason there is nothing to ask."""
+    helm = shutil.which(HELM_EXE)
+    if helm is None:
+        pytest.skip(f"no {HELM_EXE} on PATH")
+    raw = os.environ.get(CHART_ENV)
+    if not raw:
+        pytest.skip(f"no netclab-chart: set {CHART_ENV} to a checkout of it")
+    root = Path(raw).expanduser()
+    if not (root / "Chart.yaml").is_file():
+        pytest.skip(f"{CHART_ENV}={raw} holds no Chart.yaml")
+    return helm, root
+
+
+@pytest.fixture(scope="session")
+def _templates() -> dict[Path, subprocess.CompletedProcess]:
+    """One helm run per repository, as the render is kept per repository."""
+    return {}
+
+
+@pytest.fixture
+def templated(
+    repo: Path,
+    lab: Lab,
+    chart: tuple[str, Path],
+    _templates: dict[Path, subprocess.CompletedProcess],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> subprocess.CompletedProcess:
+    """What helm makes of the values -- the finished run, so that a test can judge it."""
+    if repo not in _templates:
+        helm, root = chart
+        values = tmp_path_factory.mktemp("chart") / "values.yaml"
+        values.write_text(values_yaml(lab.values), encoding="utf-8")
+        _templates[repo] = subprocess.run(
+            [helm, "template", HELM_RELEASE, str(root),
+             "--values", str(values), "--api-versions", HELM_API_VERSIONS],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=HELM_TIMEOUT,
+            stdin=subprocess.DEVNULL,
+        )
+    return _templates[repo]
 
 
 @pytest.fixture

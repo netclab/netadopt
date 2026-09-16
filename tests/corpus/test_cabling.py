@@ -16,9 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-import pytest
-
-from netadopt.lab import BRIDGE, Lab, netclab_values
+from netadopt.lab import BRIDGE, Lab
 from netadopt.render import Rendered
 from netadopt.xr import LABEL_MAX, rfc1123
 
@@ -30,14 +28,6 @@ CEOS_INTERFACE = re.compile(r"eth(?:ernet)?(\d+)", re.IGNORECASE)
 NOT_CABLED = "not cabled"
 
 End = tuple[str, str]  # (node, interface)
-
-
-@pytest.fixture
-def lab(rendered: Rendered) -> Lab:
-    built = netclab_values(rendered.hosts)
-    # Nothing below has values to read without this, so it is asserted once, here.
-    assert built.problem is None, built.problem
-    return built
 
 
 def test_a_node_name_is_one_the_chart_can_give_a_service(lab: Lab):

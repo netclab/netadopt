@@ -208,6 +208,11 @@ cable AVD wrote has to reach the topology or be named as left out.
 - A second ecosystem after AVD, under a subcommand of its own, with its model kept as
   its vendor writes it.
 
+## Developing
+
+Running the checks, the two test tiers and the release:
+[DEVELOPMENT.md](https://github.com/netclab/netadopt/blob/main/DEVELOPMENT.md).
+
 ## License
 
 [Apache-2.0](https://github.com/netclab/netadopt/blob/main/LICENSE)
