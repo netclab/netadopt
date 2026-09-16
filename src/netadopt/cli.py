@@ -7,6 +7,8 @@ nothing an ecosystem needs is imported at start-up.
 from __future__ import annotations
 
 import shlex
+import tempfile
+from collections import Counter
 from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
@@ -23,10 +25,20 @@ from netadopt import AVD_TESTED
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
 from netadopt.files import Named, find_named_files
+from netadopt.galaxy import cache_root, ensure_collections
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
+from netadopt.lab import (
+    CONNECTED_TYPES,
+    LINUX,
+    NETCLAB,
+    Ceos,
+    netclab_values,
+    values_yaml,
+)
 from netadopt.playbook import IMPORT_ROLE, Play, Playbook, find_playbooks, read_playbook
 from netadopt.pools import Pools, find_pools
+from netadopt.render import RENDER_ROLE, render
 from netadopt.repocode import Code, code_directories, find_code
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
 from netadopt.xr import (
@@ -91,6 +103,18 @@ PlayOption = Annotated[int, typer.Option(metavar="N", help="play to carry, by it
 NameOption = Annotated[
     str | None, typer.Option(help="the Fabric's name; default the repository directory's")
 ]
+
+# What a lab is written for. netclab-chart is built; containerlab is the second emitter
+# and is not offered before it exists.
+LAB_TARGETS = (NETCLAB,)
+ForOption = Annotated[str, typer.Option("--for", metavar="TARGET", help="what the lab is for")]
+ConnectedOption = Annotated[
+    str, typer.Option(metavar="TYPE", help="the node a peer outside the fabric becomes")
+]
+# Written only when given, so that the chart's own defaults hold otherwise.
+CeosImageOption = Annotated[str | None, typer.Option(help="the image every cEOS node runs")]
+CeosMemoryOption = Annotated[str | None, typer.Option(help="the memory every cEOS node asks for")]
+CeosCpuOption = Annotated[str | None, typer.Option(help="the CPU every cEOS node asks for")]
 
 
 @dataclass(frozen=True)
@@ -306,6 +330,92 @@ def emit(
     if not adoption.documents or adoption.uncarried_code or found.problems or inputs.problems:
         raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
+
+
+@avd.command()
+def lab(
+    repo: Repo,
+    playbook: PlaybookOption = None,
+    inventory: InventoryOption = None,
+    play: PlayOption = 0,
+    for_: ForOption = NETCLAB,
+    connected: ConnectedOption = LINUX,
+    ceos_image: CeosImageOption = None,
+    ceos_memory: CeosMemoryOption = None,
+    ceos_cpu: CeosCpuOption = None,
+) -> None:
+    """Write the lab topology of the repository's fabric: cabled nodes, no configuration.
+
+    The values go to stdout and everything else to stderr, so the stream pipes into
+    `helm install ... --values -` whether or not there was something to say.
+
+    AVD renders the cabling, on a copy of the repository, with the collections netadopt
+    pins -- fetched into its own cache the first time and never again.
+    """
+    if for_ not in LAB_TARGETS:
+        typer.echo(f"no lab: --for {for_} is not built -- {', '.join(LAB_TARGETS)}", err=True)
+        raise typer.Exit(2)
+    if connected not in CONNECTED_TYPES:
+        typer.echo(
+            f"no lab: --connected {connected} is not one of {', '.join(CONNECTED_TYPES)}", err=True
+        )
+        raise typer.Exit(2)
+    if playbook is None:
+        typer.echo("no lab: no playbook named -- pass --playbook", err=True)
+        raise typer.Exit(2)
+
+    found = resolve_ansible()
+    if not found.usable:
+        typer.echo(f"no Ansible: {found.problem} -- install as: uvx \"netadopt[avd]\" ...", err=True)
+        raise typer.Exit(1)
+
+    root = cache_root()
+    if not root.exists():
+        # The one slow run: four archives, and afterwards nothing reaches the network.
+        typer.echo(f"fetching arista.avd {AVD_TESTED} and its collections into {root}", err=True)
+    collections = ensure_collections(found)
+    for note in collections.notes:
+        typer.echo(note, err=True)
+    if not collections.usable:
+        typer.echo(f"no lab: {collections.problem}", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(f"rendering play [{play}] of {playbook} with {RENDER_ROLE}", err=True)
+    with tempfile.TemporaryDirectory(prefix="netadopt-") as work:
+        # The structured configurations are read before the copy goes; nothing else is kept.
+        rendered = render(
+            found, repo, playbook, collections.path, Path(work) / "render", play, inventory
+        )
+    if not rendered.usable:
+        typer.echo(f"no lab: {rendered.problem}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"rendered {_count(len(rendered.hosts), 'host')}", err=True)
+
+    built = netclab_values(
+        rendered.hosts, connected, Ceos(image=ceos_image, memory=ceos_memory, cpu=ceos_cpu)
+    )
+    for note in built.notes:
+        typer.echo(note, err=True)
+    if built.problem:
+        typer.echo(f"no lab: {built.problem}", err=True)
+        raise typer.Exit(2)
+
+    # What the values hold, which is not what the render wrote: a peer outside the
+    # fabric is a node too, and AVD rendered no structured configuration for it.
+    typer.echo(_lab_summary(built.values), err=True)
+    typer.echo(values_yaml(built.values), nl=False)
+    raise typer.Exit(0)
+
+
+def _lab_summary(values: dict) -> str:
+    """`10 nodes (8 ceos, 2 linux), 22 networks`."""
+    topology = values["topology"]
+    counted = Counter(node["type"] for node in topology["nodes"])
+    by_type = ", ".join(f"{number} {node_type}" for node_type, number in sorted(counted.items()))
+    return (
+        f"{_count(sum(counted.values()), 'node')} ({by_type}), "
+        f"{_count(len(topology['networks']), 'network')}"
+    )
 
 
 def _emit_notes(repo: Path, adoption: Adoption) -> list[str]:

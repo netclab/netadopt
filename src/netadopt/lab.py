@@ -19,12 +19,17 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+import yaml
+
 from netadopt.xr import LABEL_MAX, rfc1123
+
+# What these values are for, as `--for` names it.
+NETCLAB = "netclab"
 
 CEOS = "ceos"
 LINUX = "linux"
 NONE = "none"
-CONNECTED_KINDS = (LINUX, CEOS, NONE)
+CONNECTED_TYPES = (LINUX, CEOS, NONE)
 
 BRIDGE = "bridge"
 
@@ -64,7 +69,7 @@ def netclab_values(
 ) -> Lab:
     """The values for netclab-chart from each fabric host's rendered structured config."""
     notes: list[str] = []
-    kinds: dict[str, str] = {host: CEOS for host in rendered}
+    node_types: dict[str, str] = {host: CEOS for host in rendered}
     parent: dict[End, End] = {}
     # a linux node's port name, spelled, and the peer_interface first spelled so
     ports: dict[End, str] = {}
@@ -109,9 +114,9 @@ def netclab_values(
                 continue
             elif connected == CEOS:
                 far = _ceos_interface(peer_interface)
-                kinds.setdefault(peer, CEOS)
+                node_types.setdefault(peer, CEOS)
             else:
-                kinds.setdefault(peer, LINUX)
+                node_types.setdefault(peer, LINUX)
                 if peer_interface is None:
                     unnamed.append(((host, local), peer, f"{host} {name} - {peer}"))
                     continue
@@ -144,7 +149,7 @@ def netclab_values(
         if (host, carrier) not in parent:
             notes.append(f"{host} {name}: not cabled -- only EthernetN is, and {carrier} has no cable")
 
-    spelled, problem = _spell(kinds, notes)
+    spelled, problem = _spell(node_types, notes)
     if problem:
         return Lab(notes=tuple(notes), problem=problem)
 
@@ -164,8 +169,8 @@ def netclab_values(
 
     nodes = []
     for host in sorted(spelled, key=lambda host: spelled[host]):
-        node: dict = {"name": spelled[host], "type": kinds[host]}
-        if kinds[host] == CEOS:
+        node: dict = {"name": spelled[host], "type": node_types[host]}
+        if node_types[host] == CEOS:
             node.update({k: v for k, v in vars(ceos).items() if v is not None})
         node["interfaces"] = [
             {"name": interface, "network": network}
@@ -174,6 +179,11 @@ def netclab_values(
         nodes.append(node)
 
     return Lab(values={"topology": {"networks": networks, "nodes": nodes}}, notes=tuple(notes))
+
+
+def values_yaml(values: dict) -> str:
+    """The values as a file for `helm -f`: keys in their own order, long lines never folded."""
+    return yaml.safe_dump(values, sort_keys=False, width=float("inf"))
 
 
 def _ceos_interface(name: object) -> str | None:
@@ -189,7 +199,7 @@ def _linux_interface(name: object) -> str | None:
     return spelled if 0 < len(spelled.encode()) <= LINUX_INTERFACE_MAX else None
 
 
-def _spell(kinds: Mapping[str, str], notes: list[str]) -> tuple[dict[str, str], str | None]:
+def _spell(node_types: Mapping[str, str], notes: list[str]) -> tuple[dict[str, str], str | None]:
     """Each host's node name: a Pod's and a Service's, so lowercase, a letter first, at most 63.
 
     A host no name can be spelled from is left out and named; two hosts spelled alike
@@ -197,7 +207,7 @@ def _spell(kinds: Mapping[str, str], notes: list[str]) -> tuple[dict[str, str], 
     """
     spelled: dict[str, str] = {}
     owner: dict[str, str] = {}
-    for host in sorted(kinds):
+    for host in sorted(node_types):
         name = rfc1123(host)
         if not name or not name[0].isalpha() or len(name) > LABEL_MAX:
             notes.append(f"{host}: left out, with its cables -- no node name can be spelled from it")

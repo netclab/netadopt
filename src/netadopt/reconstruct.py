@@ -117,12 +117,12 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
 
     carried = [("pool", entry) for entry in spec.get("pools") or []]
     carried += [("file", entry) for entry in spec.get("files") or []]
-    for kind, entry in carried:
+    for carried_as, entry in carried:
         if not isinstance(entry, dict):
-            problems.append(f"{kind} {entry!r}: not a mapping")
+            problems.append(f"{carried_as} {entry!r}: not a mapping")
             continue
         path, beside = entry.get("path"), entry.get("beside")
-        what = f"{kind} {path!r}"
+        what = f"{carried_as} {path!r}"
         if beside not in bases:
             problems.append(f"{what}: beside is {beside!r}, not inventory or playbook")
             continue
