@@ -26,6 +26,10 @@ INCLUDE_ROLE = "include_role"    # resolved as the play runs
 # can sit in one.
 TASK_KEYS = ("pre_tasks", "tasks", "post_tasks", "handlers")
 
+# Both spellings of the one key that makes an entry no play: it pulls in another
+# playbook and has neither hosts nor tasks of its own.
+IMPORT_PLAYBOOK_KEYS = ("import_playbook", "ansible.builtin.import_playbook")
+
 # Task keys holding nested tasks.
 BLOCK_KEYS = ("block", "rescue", "always")
 

@@ -37,7 +37,7 @@ from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.inventory import Inventory, read_inventory
-from netadopt.playbook import TASK_KEYS, read_playbook
+from netadopt.playbook import IMPORT_PLAYBOOK_KEYS, TASK_KEYS, read_playbook
 from netadopt.reconstruct import Reconstructed, reconstruct
 
 AVD_ENV = "NETADOPT_AVD"
@@ -287,7 +287,6 @@ VAULT_HEADER = b"$ANSIBLE_VAULT;"
 
 # The task names every host it could not template, then fails. A host name may hold dots.
 _FAILED_HOSTS = re.compile(r"processing \d+ host\(s\): (.+?)\.(?:\"|$)", re.MULTILINE)
-_IMPORT_PLAYBOOK = ("import_playbook", "ansible.builtin.import_playbook")
 
 
 @dataclass(frozen=True)
@@ -325,7 +324,7 @@ def resolve(ansible: Ansible) -> Resolve:
     ) -> Resolved:
         out = root.parent / f"{root.name}-oracle"
         raw = read_playbook(root, playbook).plays[0].raw
-        if any(key in raw for key in _IMPORT_PLAYBOOK):
+        if any(key in raw for key in IMPORT_PLAYBOOK_KEYS):
             return Resolved(problem="play [0] imports another playbook and has no hosts of its own")
         play = {key: value for key, value in raw.items() if key not in (*TASK_KEYS, "roles")}
         play["tasks"] = [
