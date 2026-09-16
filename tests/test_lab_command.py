@@ -45,6 +45,10 @@ BUILD = """
     - ansible.builtin.import_role: {name: arista.avd.eos_designs}
 - name: Build the twin
   hosts: FABRIC
+  tasks:
+    - ansible.builtin.import_role: {name: arista.avd.eos_designs}
+- name: Clear facts
+  hosts: all
   tasks: []
 """
 
@@ -142,6 +146,17 @@ def test_the_nodes_are_counted_because_the_rendered_hosts_are_not_all_of_them(
 
     assert "rendered 2 hosts" in result.stderr
     assert "3 nodes (2 ceos, 1 linux), 2 networks" in result.stderr
+
+
+def test_a_play_that_was_not_rendered_is_named(repo, ansible, collections):
+    # Another play is another fabric over the same hosts, and one lab must not read as
+    # the lab of the repository. A play pulling in no role is named without advice.
+    result = lab(repo, "--playbook", "build.yml")
+
+    assert "play [1] Build the twin: not rendered -- render it with --play 1" in result.stderr
+    assert "play [2] Clear facts: not rendered -- pulls in no role" in result.stderr
+    assert "--play 2" not in result.stderr
+    assert "play [0]" not in result.stderr.replace("rendering play [0]", "")
 
 
 def test_a_peer_outside_the_fabric_is_the_node_connected_says(repo, ansible, collections):

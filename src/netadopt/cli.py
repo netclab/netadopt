@@ -196,8 +196,14 @@ def report(
     repo: Repo,
     playbook: PlaybookOption = None,
     inventory: InventoryOption = None,
+    play: PlayOption = 0,
+    name: NameOption = None,
 ) -> None:
-    """Say what is in the repository, and what emit carries of it."""
+    """Say what is in the repository, and what emit carries of it.
+
+    `--play` and `--name` are emit's, and mean the same here: a playbook holding two
+    fabrics has a report for each, under the name each would be emitted with.
+    """
     found = resolve_ansible()
     if not found.usable:
         # An install without the extra, not a fact about the repository: a report
@@ -211,10 +217,12 @@ def report(
     read = read_playbook(repo, playbook) if playbook else None
     code = find_code(repo, config, (inventory,) if inventory else config.inventory)
 
-    # What emit carries with no --play and no --name: play 0, under the directory's name.
-    name = rfc1123(repo.resolve().name) or "fabric"
-    inputs = fabric_inputs(var_files, name)
-    adoption = _adopt(repo, playbook, source, 0, name, config, var_files) if playbook else None
+    # What emit carries for this play, under the name it would be emitted with.
+    wanted = name or repo.resolve().name
+    refused = _name_refused(wanted)
+    spelled = rfc1123(wanted) or "fabric"
+    inputs = fabric_inputs(var_files, spelled)
+    adoption = _adopt(repo, playbook, source, play, spelled, config, var_files) if playbook else None
 
     # Every part is reported before anything decides the run failed: an unreadable
     # inventory does not hide a readable playbook.
@@ -227,7 +235,7 @@ def report(
         *_inventory_rows(listed),
         _vars_row(var_files),
         _playbook_row(repo, playbook, read),
-        _renders_row(repo, playbook, inventory),
+        _renders_row(repo, playbook, inventory, play),
     ]
     console.print(_grid(overview, label_style="bold"))
     if read is not None and read.usable:
@@ -236,7 +244,9 @@ def report(
 
     if adoption is not None:
         _print_section(console, "Carried", "green", _carried(adoption, inputs))
-        _print_section(console, "Not carried", "red", _not_carried(repo, adoption, var_files, inputs))
+        _print_section(
+            console, "Not carried", "red", _not_carried(repo, adoption, var_files, inputs, refused)
+        )
         if adoption.vault_file:
             # on a line of its own, never wrapped, so that it can be copied
             command = _vault_secret_command(repo, adoption)
@@ -252,6 +262,7 @@ def report(
         or adoption.uncarried_code
         or var_files.problems
         or inputs.problems
+        or refused is not None  # emit would emit nothing under this name
     )
     if unreadable or incomplete:
         raise typer.Exit(2)
@@ -391,6 +402,13 @@ def lab(
         typer.echo(f"no lab: {rendered.problem}", err=True)
         raise typer.Exit(2)
     typer.echo(f"rendered {_count(len(rendered.hosts), 'host')}", err=True)
+    # Another play is another fabric over the same hosts -- twodc's second one is a
+    # digital twin -- and a lab of one of them must not read as the lab of the repository.
+    read = read_playbook(repo, playbook)
+    for other in read.plays if read.usable else ():
+        if other.index != play:
+            what = NO_ROLE if _no_role(other) else f"render it with --play {other.index}"
+            typer.echo(f"{_label(other)}: not rendered -- {what}", err=True)
 
     built = netclab_values(
         rendered.hosts, connected, Ceos(image=ceos_image, memory=ceos_memory, cpu=ceos_cpu)
@@ -428,9 +446,12 @@ def _emit_notes(repo: Path, adoption: Adoption) -> list[str]:
     # Another play is another run, and it needs its own --name: under the same one it
     # would replace this Fabric in the cluster.
     for other in adoption.other_plays:
-        said.append(
-            f"{_label(other)}: not carried -- carry it with --play {other.index} and its own --name"
+        what = (
+            NO_ROLE
+            if _no_role(other)
+            else f"carry it with --play {other.index} and its own --name"
         )
+        said.append(f"{_label(other)}: not carried -- {what}")
     if adoption.vault_file:
         said.append(
             f"not carried: the vault password file {adoption.vault_file}, named by ansible.cfg -- "
@@ -466,6 +487,19 @@ def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:
 
 def _label(play: Play) -> str:
     return f"play [{play.index}] {play.name}" if play.name else f"play [{play.index}]"
+
+
+def _no_role(play: Play) -> bool:
+    """A play that pulls in no role at all, which is said and then left alone.
+
+    AVD's twodc scenario keeps a `meta: clear_facts` play between its two fabrics, and
+    telling anyone to carry that one as a fabric of its own is advice with nothing
+    behind it. Saying only this says no more than the report's own Roles column does.
+    """
+    return not play.roles
+
+
+NO_ROLE = "pulls in no role"
 
 
 # The report. Each part of the repository is a row of plain strings; rich lays them out.
@@ -551,7 +585,24 @@ def _playbook_row(repo: Path, playbook: str | None, read: Playbook | None) -> tu
     return ("Playbook", playbook or "", _count(len(read.plays), "play"))
 
 
-def _renders_row(repo: Path, playbook: str | None, inventory: str | None) -> tuple[str, ...]:
+def _name_refused(wanted: str) -> tuple[str, str] | None:
+    """The name and why `emit` would refuse it, or None -- said without running emit."""
+    spelled = rfc1123(wanted)
+    if not spelled:
+        return (wanted, "no name can be spelled from it -- emit refuses it, pass --name")
+    if len(spelled) > LABEL_MAX:
+        # the name is also the value of the label a Fabric selects its inputs by
+        why = (
+            f"{len(spelled)} characters, and a label value holds {LABEL_MAX} -- "
+            "emit refuses it, pass a shorter --name"
+        )
+        return (spelled, why)
+    return None
+
+
+def _renders_row(
+    repo: Path, playbook: str | None, inventory: str | None, play: int = 0
+) -> tuple[str, ...]:
     """Whether the design renders on the AVD netadopt pins -- which this report never asks.
 
     Rendering runs everything the vars hold and fetches AVD's collections on its first
@@ -563,6 +614,8 @@ def _renders_row(repo: Path, playbook: str | None, inventory: str | None) -> tup
         command += f" --playbook {shlex.quote(playbook)}"
     if inventory:
         command += f" --inventory {shlex.quote(inventory)}"
+    if play:
+        command += f" --play {play}"
     return ("Renders", "not measured", command)
 
 
@@ -607,17 +660,25 @@ def _carried(adoption: Adoption, inputs: Emitted) -> list[tuple[str, ...]]:
 
 
 def _not_carried(
-    repo: Path, adoption: Adoption, found: VarFiles, inputs: Emitted
+    repo: Path,
+    adoption: Adoption,
+    found: VarFiles,
+    inputs: Emitted,
+    refused: tuple[str, str] | None = None,
 ) -> list[tuple[str, ...]]:
     rows: list[tuple[str, ...]] = []
+
+    # First: a name emit refuses means it emits nothing at all, whatever else reads.
+    if refused:
+        rows.append(refused)
 
     # An unreadable playbook is already in the Playbook row.
     if adoption.problem and adoption.playbook is not None:
         rows.append(("Fabric", adoption.problem))
 
-    if adoption.other_plays:
-        plays = ", ".join(f"play {play.index}" for play in adoption.other_plays)
-        rows.append((plays, "each a separate run: --play N --name NAME"))
+    for other in adoption.other_plays:
+        what = NO_ROLE if _no_role(other) else f"a separate run: --play {other.index} --name NAME"
+        rows.append((_label(other), what))
 
     if adoption.vault_file:
         rows.append((adoption.vault_file, "the vault password; create its Secret:"))

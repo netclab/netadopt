@@ -23,7 +23,10 @@ BUILD = """
   hosts: FABRIC
   vars:
     avd_digital_twin_mode: true
-  tasks: []
+  tasks:
+    - name: Generate
+      ansible.builtin.import_role:
+        name: arista.avd.eos_designs
 """
 
 INVENTORY = """
@@ -84,8 +87,32 @@ def test_the_inventory_ansible_cfg_names_is_the_inventory_root(repo):
 def test_a_play_not_carried_is_named_with_the_way_to_carry_it(repo):
     result, _ = emit(repo, "--playbook", "build.yml")
 
-    assert "play [1] Build the twin: not carried" in result.stderr
-    assert "--play 1" in result.stderr
+    assert (
+        "play [1] Build the twin: not carried -- carry it with --play 1 and its own --name"
+        in result.stderr
+    )
+
+
+def test_a_play_pulling_in_no_role_is_named_without_advice(repo):
+    # A `meta: clear_facts` play is no fabric, and telling anyone to carry it as one is
+    # advice with nothing behind it.
+    (repo / "build.yml").write_text(
+        (repo / "build.yml").read_text() + "- name: Clear facts\n  hosts: all\n  tasks: []\n"
+    )
+
+    result, _ = emit(repo, "--playbook", "build.yml")
+
+    assert "play [2] Clear facts: not carried -- pulls in no role" in result.stderr
+    assert "--play 2" not in result.stderr
+
+
+def test_a_name_of_digits_stays_a_string(repo):
+    # `name: 1234` unquoted is an integer, and the API server refuses it.
+    result, documents = emit(repo, "--playbook", "build.yml", "--name", "1234")
+
+    fabric = next(doc for doc in documents if doc["kind"] == "Fabric")
+    assert fabric["metadata"]["name"] == "1234"
+    assert "name: '1234'" in result.stdout
 
 
 def test_play_and_name_carry_another_play_under_its_own_name(repo):

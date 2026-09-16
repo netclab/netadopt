@@ -24,7 +24,10 @@ BUILD = """
   hosts: FABRIC
   vars:
     avd_digital_twin_mode: true
-  tasks: []
+  tasks:
+    - name: Generate
+      ansible.builtin.import_role:
+        name: arista.avd.eos_designs
 """
 
 INVENTORY = """
@@ -124,7 +127,7 @@ def test_another_play_and_the_vault_password_are_under_not_carried(repo, ansible
     result = report(repo, "--playbook", "build.yml")
 
     assert section(result.output, "Not carried") == [
-        "play 1 each a separate run: --play N --name NAME",
+        "play [1] Build the twin a separate run: --play 1 --name NAME",
         ".vault the vault password; create its Secret:",
         f"kubectl create secret generic single-dc-l3ls-vault --from-file=password={repo / '.vault'}",
     ]
@@ -169,6 +172,59 @@ def test_without_a_playbook_the_candidates_are_named_and_nothing_is_carried(repo
         result.output.splitlines()
     )
     assert section(result.output, "Carried") == []
+
+
+def test_another_play_has_a_report_of_its_own(repo, ansible):
+    ansible()
+    result = report(repo, "--playbook", "build.yml", "--play", "1", "--name", "the-twin")
+
+    assert result.exit_code == 0, result.output
+    assert section(result.output, "Carried")[0] == "Fabric the-twin, from play 1"
+    assert section(result.output, "Not carried") == [
+        "play [0] Build a separate run: --play 0 --name NAME"
+    ]
+
+
+def test_a_play_pulling_in_no_role_is_named_without_advice(repo, ansible):
+    # twodc keeps a `meta: clear_facts` play between its two fabrics, and carrying that
+    # one as a fabric of its own is advice with nothing behind it.
+    write(repo, {"build.yml": BUILD + "- name: Clear facts\n  hosts: all\n  tasks: []\n"})
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert "play [2] Clear facts pulls in no role" in section(result.output, "Not carried")
+    assert "--play 2" not in result.output
+
+
+def test_the_renders_row_carries_the_play_it_reported(repo, ansible):
+    ansible()
+    result = report(repo, "--playbook", "build.yml", "--play", "1")
+
+    assert f"Renders not measured netadopt avd lab {repo} --playbook build.yml --play 1" in (
+        squeezed(result.output.splitlines())
+    )
+
+
+def test_a_name_emit_would_refuse_is_not_carried_and_fails_the_report(repo, ansible):
+    ansible()
+    result = report(repo, "--playbook", "build.yml", "--name", "a" * 70)
+
+    assert result.exit_code == 2
+    assert section(result.output, "Not carried")[0] == (
+        f"{'a' * 70} 70 characters, and a label value holds 63 -- "
+        "emit refuses it, pass a shorter --name"
+    )
+
+
+def test_a_name_nothing_can_be_spelled_from_is_not_carried(repo, ansible):
+    ansible()
+    result = report(repo, "--playbook", "build.yml", "--name", "///")
+
+    assert result.exit_code == 2
+    assert section(result.output, "Not carried")[0] == (
+        "/// no name can be spelled from it -- emit refuses it, pass --name"
+    )
 
 
 def test_whether_the_design_renders_is_not_measured_and_the_row_says_what_measures_it(

@@ -200,8 +200,9 @@ cable AVD wrote has to reach the topology or be named as left out.
   carried.
 - A code directory named in `ansible.cfg`, such as `vars_plugins = plugins/vars`, is not
   carried.
-- One play per `Fabric`. Another play of the same playbook is another run:
-  `--play N --name NAME`.
+- One play per `Fabric`, and one play per lab. Another play of the same playbook is
+  another run: `report --play N --name NAME`, `emit` the same, `lab --play N`. Each
+  names the plays it did not carry.
 - `lab` cables `EthernetN` only. A subinterface rides on its parent's cable, and a
   breakout such as `Ethernet1/4` is left out and named.
 - netclab-chart names a veth `<release>-<network>-<hash>` within the 15 bytes Linux
