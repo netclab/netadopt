@@ -36,9 +36,11 @@ from netadopt import ansible_yaml
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
+from netadopt.galaxy import ensure_collections
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.playbook import IMPORT_PLAYBOOK_KEYS, TASK_KEYS, read_playbook
 from netadopt.reconstruct import Reconstructed, reconstruct
+from netadopt.render import Rendered, render
 
 AVD_ENV = "NETADOPT_AVD"
 MOLECULE_FILE = "molecule.yml"
@@ -206,6 +208,48 @@ def rebuilt_env(repo: Path, reconstructed: Reconstructed, tmp_path: Path) -> dic
     password.write_bytes((repo / named).read_bytes())
     password.chmod(0o600)
     return {"ANSIBLE_VAULT_PASSWORD_FILE": str(password)}
+
+
+@pytest.fixture(scope="session")
+def collections(ansible: Ansible) -> Path:
+    """The collections netadopt renders with, in its own cache -- fetched once, if at all."""
+    found = ensure_collections(ansible)
+    if not found.usable:
+        pytest.skip(f"no collections to render with: {found.problem}")
+    return found.path
+
+
+@pytest.fixture(scope="session")
+def _renders() -> dict[Path, Rendered]:
+    """One render per repository, kept for every test that asks: it is the slow part."""
+    return {}
+
+
+@pytest.fixture
+def rendered(
+    ansible: Ansible,
+    repo: Path,
+    playbook: str,
+    inventory_source: str | None,
+    collections: Path,
+    _renders: dict[Path, Rendered],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Rendered:
+    """What AVD writes for the repository's first play, on the copy netadopt renders on.
+
+    A first play that is no eos_designs fabric renders nothing, and that is a fact about
+    the repository: it is skipped with what Ansible said.
+    """
+    if repo not in _renders:
+        work = tmp_path_factory.mktemp("render") / repo.name
+        _renders[repo] = render(
+            ansible, repo, playbook, collections, work, inventory=inventory_source
+        )
+    out = _renders[repo]
+    if not out.usable:
+        # A skip reason is read in a one-line summary, and Ansible names every host.
+        pytest.skip(f"nothing rendered: {out.problem.splitlines()[0]}")
+    return out
 
 
 @pytest.fixture

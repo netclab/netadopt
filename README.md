@@ -106,23 +106,86 @@ kubectl apply --server-side -f single-dc-l3ls.yaml
 A plain `kubectl apply` drops every `key: null` in a map, and AVD reads a null
 differently from a missing key.
 
+## Building a lab from the fabric
+
+`lab` writes a lab topology of the same fabric: the cabling, as nodes and networks.
+
+```
+$ netadopt avd lab single-dc-l3ls --playbook build.yml > values.yaml
+rendering play [0] of build.yml with arista.avd.eos_designs
+rendered 8 hosts
+10 nodes (8 ceos, 2 linux), 22 networks
+```
+
+The values are [netclab-chart](https://github.com/netclab/netclab-chart)'s:
+
+```yaml
+topology:
+  networks:
+  - name: n1
+  - name: n2
+  # ...
+  nodes:
+  - name: dc1-leaf1-server1
+    type: linux
+    interfaces:
+    - name: ilo
+      network: n1
+    - name: pci1
+      network: n2
+    - name: pci2
+      network: n3
+  - name: dc1-leaf1a
+    type: ceos
+    interfaces:
+    - name: eth1
+      network: n4
+    # ...
+```
+
+```
+helm install lab netclab/netclab --values values.yaml
+```
+
+The nodes are cabled and empty: no configuration is loaded into them. The cabling is
+AVD's, so netadopt renders the repository with AVD to get it - on a copy, never in the
+repository, and with the collections it pins, fetched into its own cache the first time
+and never again.
+
+A peer outside the fabric - a server, a firewall - becomes the node `--connected`
+says: `linux` by default, or `ceos`, or `none` to leave it out. `--ceos-image`,
+`--ceos-memory` and `--ceos-cpu` are written only when given, so the chart's own
+defaults hold otherwise.
+
+Node names are the repository's hostnames, lowercased for Kubernetes. A host no name
+can be spelled from is left out with its cables and said on stderr; two hosts that
+would share a name stop the lab rather than one of them being guessed at.
+
+Exit codes are `report`'s: `0`, or `2` when there is no lab, or `1` without the `avd`
+extra.
+
 ## Before running it on someone else's repository
 
 `report` asks Ansible about the inventory, in the repository. Ansible then runs
 whatever the repository gives it: an executable inventory, and the plugin directories
 named in its `ansible.cfg`. `report` names both under Warnings - after running them.
 
-`emit` runs no Ansible; it only reads files. Neither command renders Jinja, so a
-`lookup('pipe', ...)` in the vars runs only where the design is rendered.
+`emit` runs no Ansible; it only reads files. Neither renders Jinja.
 
-Neither connects to a device.
+`lab` does render it, with AVD, so everything in the vars runs - a `lookup('pipe',
+...)` included. It renders on a copy of the repository, never in it, and it is the one
+command that reaches the network itself: on its first run, to fetch the collections it
+pins.
+
+None of them connects to a device.
 
 ## Tested on AVD's own repositories
 
 Each release is tested on the examples and test scenarios that ship with AVD, at the
 release `netadopt --version` names. Every one that can be carried is emitted, rebuilt
 from the objects, and resolved by Ansible on both sides, and every host must end up
-with the same variables.
+with the same variables. Every one that renders is also built into a lab, where each
+cable AVD wrote has to reach the topology or be named as left out.
 
 ## Limits
 
@@ -132,10 +195,16 @@ with the same variables.
   carried.
 - One play per `Fabric`. Another play of the same playbook is another run:
   `--play N --name NAME`.
+- `lab` cables `EthernetN` only. A subinterface rides on its parent's cable, and a
+  breakout such as `Ethernet1/4` is left out and named.
+- netclab-chart names a veth `<release>-<network>-<hash>` within the 15 bytes Linux
+  allows, and refuses to render when there is no room left, so keep the Helm release
+  name short: nine characters fits every lab up to `n99`.
 
 ## Where this is going
 
 - The same proof on your own repository, not only a report.
+- `lab --for containerlab`, beside netclab-chart.
 - A second ecosystem after AVD, under a subcommand of its own, with its model kept as
   its vendor writes it.
 
