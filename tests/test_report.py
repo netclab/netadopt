@@ -171,6 +171,27 @@ def test_without_a_playbook_the_candidates_are_named_and_nothing_is_carried(repo
     assert section(result.output, "Carried") == []
 
 
+def test_whether_the_design_renders_is_not_measured_and_the_row_says_what_measures_it(
+    repo, ansible
+):
+    ansible()
+    result = report(repo, "--playbook", "build.yml", "--inventory", "inventory/")
+
+    assert (
+        f"Renders not measured netadopt avd lab {repo} --playbook build.yml "
+        "--inventory inventory/" in squeezed(result.output.splitlines())
+    )
+
+
+def test_the_renders_row_names_no_playbook_it_was_not_given(repo, ansible):
+    ansible()
+    result = report(repo)
+
+    assert f"Renders not measured netadopt avd lab {repo}" in squeezed(
+        result.output.splitlines()
+    )
+
+
 def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo, ansible):
     write(repo, {"ansible.cfg": "[defaults]\ninventory=inventory.yml\nvars_plugins=plugins/vars\n"})
 

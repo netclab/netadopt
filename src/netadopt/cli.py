@@ -227,6 +227,7 @@ def report(
         *_inventory_rows(listed),
         _vars_row(var_files),
         _playbook_row(repo, playbook, read),
+        _renders_row(repo, playbook, inventory),
     ]
     console.print(_grid(overview, label_style="bold"))
     if read is not None and read.usable:
@@ -548,6 +549,21 @@ def _playbook_row(repo: Path, playbook: str | None, read: Playbook | None) -> tu
     if not read.usable:
         return ("Playbook", playbook or "", read.problem or "")
     return ("Playbook", playbook or "", _count(len(read.plays), "play"))
+
+
+def _renders_row(repo: Path, playbook: str | None, inventory: str | None) -> tuple[str, ...]:
+    """Whether the design renders on the AVD netadopt pins -- which this report never asks.
+
+    Rendering runs everything the vars hold and fetches AVD's collections on its first
+    use, so it belongs to `lab` and not to a report that is seconds and touches nothing.
+    The row is the command, so that a report is never read as the whole measurement.
+    """
+    command = f"netadopt avd lab {shlex.quote(str(repo))}"
+    if playbook:
+        command += f" --playbook {shlex.quote(playbook)}"
+    if inventory:
+        command += f" --inventory {shlex.quote(inventory)}"
+    return ("Renders", "not measured", command)
 
 
 def _plays_table(read: Playbook) -> Table:

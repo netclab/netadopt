@@ -63,6 +63,9 @@ Warnings
 
 - **Warnings** are carried, but worth knowing: a password in plain text, a vars file
   for a host the inventory does not have.
+- **Renders** is not measured here. Rendering runs everything the vars hold and needs
+  AVD's collections, so it belongs to `netadopt avd lab`, and the row is the command
+  that measures it. A report says the model was read, never that it builds.
 
 Exit codes: `0` when the model is carried whole, warnings or not; `2` when a part of
 it is not carried or something did not read; `1` when netadopt was installed without
@@ -152,6 +155,10 @@ AVD's, so netadopt renders the repository with AVD to get it - on a copy, never 
 repository, and with the collections it pins, fetched into its own cache the first time
 and never again.
 
+That render is also the answer `report` cannot give: once a run reaches `rendered N
+hosts`, the repository builds on the AVD version shown by `netadopt --version`. A run
+that stops instead prints what AVD refused, host by host.
+
 A peer outside the fabric - a server, a firewall - becomes the node `--connected`
 says: `linux` by default, or `ceos`, or `none` to leave it out. `--ceos-image`,
 `--ceos-memory` and `--ceos-cpu` are written only when given, so the chart's own
@@ -182,7 +189,7 @@ None of them connects to a device.
 ## Tested on AVD's own repositories
 
 Each release is tested on the examples and test scenarios that ship with AVD, at the
-release `netadopt --version` names. Every one that can be carried is emitted, rebuilt
+version shown by `netadopt --version`. Every one that can be carried is emitted, rebuilt
 from the objects, and resolved by Ansible on both sides, and every host must end up
 with the same variables. Every one that renders is also built into a lab, where each
 cable AVD wrote has to reach the topology or be named as left out.
