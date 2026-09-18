@@ -19,8 +19,8 @@ from netadopt import ansible_yaml
 
 # Where a role reference sits. Three things, three precedences, so three names.
 ROLES_KEYWORD = "roles-keyword"  # runs before tasks; its params outrank host vars
-IMPORT_ROLE = "import_role"      # static, resolved when the playbook is parsed
-INCLUDE_ROLE = "include_role"    # resolved as the play runs
+IMPORT_ROLE = "import_role"  # static, resolved when the playbook is parsed
+INCLUDE_ROLE = "include_role"  # resolved as the play runs
 
 # Play keys whose value is a list of tasks. handlers are read too -- a role reference
 # can sit in one.
@@ -107,9 +107,7 @@ def find_playbooks(repo: Path) -> tuple[Playbook, ...]:
     A repository holds several -- build, deploy, validate. Which one builds the fabric
     is not guessed here; these are the files that could be an answer.
     """
-    candidates = sorted(
-        path for pattern in ("*.yml", "*.yaml") for path in repo.glob(pattern)
-    )
+    candidates = sorted(path for pattern in ("*.yml", "*.yaml") for path in repo.glob(pattern))
     found = [read_playbook(repo, path.name) for path in candidates]
     return tuple(pb for pb in found if pb.usable)
 

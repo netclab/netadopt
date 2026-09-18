@@ -62,7 +62,11 @@ def test_plays_are_listed_in_file_order_including_ones_that_pull_in_nothing(repo
 
     assert read.usable
     assert [play.index for play in read.plays] == [0, 1, 2]
-    assert [play.name for play in read.plays] == ["Converge", "Clear facts between plays", "Converge"]
+    assert [play.name for play in read.plays] == [
+        "Converge",
+        "Clear facts between plays",
+        "Converge",
+    ]
     assert read.plays[1].roles == ()
     assert read.plays[2].var_names == ("avd_digital_twin_mode",)
 

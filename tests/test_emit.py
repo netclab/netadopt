@@ -127,7 +127,9 @@ def test_play_and_name_carry_another_play_under_its_own_name(repo):
 
 
 def test_a_vault_password_file_is_named_as_a_secret_and_never_carried(repo):
-    (repo / "ansible.cfg").write_text("[defaults]\ninventory=inventory.yml\nvault_password_file=.vault\n")
+    (repo / "ansible.cfg").write_text(
+        "[defaults]\ninventory=inventory.yml\nvault_password_file=.vault\n"
+    )
     (repo / ".vault").write_text("not-a-real-password\n")
 
     result, documents = emit(repo, "--playbook", "build.yml")
@@ -146,7 +148,9 @@ def test_a_vault_password_file_is_named_as_a_secret_and_never_carried(repo):
 def test_a_vaulted_value_is_written_line_by_line(repo):
     ciphertext = "$ANSIBLE_VAULT;1.1;AES256\n" + "6162636465" * 8 + "\n" + "6162" + "\n"
     body = "\n".join("  " + line for line in ciphertext.splitlines())
-    (repo / "group_vars" / "FABRIC.yml").write_text(f"fabric_name: FABRIC\nsecret: !vault |\n{body}\n")
+    (repo / "group_vars" / "FABRIC.yml").write_text(
+        f"fabric_name: FABRIC\nsecret: !vault |\n{body}\n"
+    )
 
     result, documents = emit(repo, "--playbook", "build.yml")
 
@@ -282,12 +286,18 @@ def test_files_the_design_names_are_carried_in_a_config_map_by_path(repo):
     assert result.exit_code == 0, result.stderr
     assert documents[0]["spec"]["files"] == [
         {
-            "configMapRef": {"name": "single-dc-l3ls-files", "key": "custom_templates.router-id.j2"},
+            "configMapRef": {
+                "name": "single-dc-l3ls-files",
+                "key": "custom_templates.router-id.j2",
+            },
             "path": "custom_templates/router-id.j2",
             "beside": "playbook",
         },
         {
-            "configMapRef": {"name": "single-dc-l3ls-files", "key": "templates.mlag.ethernet-interfaces.j2"},
+            "configMapRef": {
+                "name": "single-dc-l3ls-files",
+                "key": "templates.mlag.ethernet-interfaces.j2",
+            },
             "path": "templates/mlag/ethernet-interfaces.j2",
             "beside": "playbook",
         },
@@ -381,7 +391,9 @@ def test_a_vars_file_that_did_not_read_is_named_and_fails_the_run(repo):
 
 
 def test_a_code_directory_ansible_cfg_names_is_not_carried_and_fails_the_run(repo):
-    (repo / "ansible.cfg").write_text("[defaults]\ninventory=inventory.yml\nvars_plugins=plugins/vars\n")
+    (repo / "ansible.cfg").write_text(
+        "[defaults]\ninventory=inventory.yml\nvars_plugins=plugins/vars\n"
+    )
 
     result, documents = emit(repo, "--playbook", "build.yml")
 

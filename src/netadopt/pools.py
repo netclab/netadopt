@@ -66,7 +66,9 @@ def find_pools(found: VarFiles, play: dict, repo: Path) -> Pools:
     if not named:
         default, why = _default(scopes)
         if why:
-            notes.append(f"pool_manager without pools_file, and {why} -- the pool file is not carried")
+            notes.append(
+                f"pool_manager without pools_file, and {why} -- the pool file is not carried"
+            )
         wanted += [(path, beside, dirs[beside] / path) for path, beside in default]
 
     files: list[PoolFile] = []
@@ -76,13 +78,19 @@ def find_pools(found: VarFiles, play: dict, repo: Path) -> Pools:
             missing.append(path)
             continue
         try:
-            files.append(PoolFile(path=path, beside=beside, text=source.read_text(encoding="utf-8")))
+            files.append(
+                PoolFile(path=path, beside=beside, text=source.read_text(encoding="utf-8"))
+            )
         except (OSError, UnicodeDecodeError) as err:
             notes.append(f"pool file {path}: could not be read -- {err}")
     # With no pools_file every fabric_name is a candidate, and only one need exist.
     if missing and (named or not files):
-        shown = ", ".join(missing[:3]) + (f" and {len(missing) - 3} more" if len(missing) > 3 else "")
-        notes.append(f"pool_manager is set, and there is no pool file at {shown} -- AVD assigns node IDs afresh")
+        shown = ", ".join(missing[:3]) + (
+            f" and {len(missing) - 3} more" if len(missing) > 3 else ""
+        )
+        notes.append(
+            f"pool_manager is set, and there is no pool file at {shown} -- AVD assigns node IDs afresh"
+        )
     return Pools(files=tuple(files), notes=tuple(notes))
 
 

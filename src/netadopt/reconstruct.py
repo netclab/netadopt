@@ -126,7 +126,12 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
         if beside not in bases:
             problems.append(f"{what}: beside is {beside!r}, not inventory or playbook")
             continue
-        if not isinstance(path, str) or not path or PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts:
+        if (
+            not isinstance(path, str)
+            or not path
+            or PurePosixPath(path).is_absolute()
+            or ".." in PurePosixPath(path).parts
+        ):
             problems.append(f"{what}: not a path inside the repository")
             continue
         ref = entry.get("configMapRef") or {}
@@ -138,7 +143,11 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
 
     for doc in documents:
         labels = (doc.get("metadata") or {}).get("labels") or {}
-        if doc.get("kind") != FABRIC_INPUT or not selector or not selector.items() <= labels.items():
+        if (
+            doc.get("kind") != FABRIC_INPUT
+            or not selector
+            or not selector.items() <= labels.items()
+        ):
             continue
         what = _name(doc)
         input_spec = doc.get("spec") or {}
@@ -203,11 +212,19 @@ def _vault_password(spec: dict, config: AnsibleCfg) -> tuple[SecretRef | None, s
     named = config.vault_password_file
     if ref is None:
         if named:
-            return None, f"ansible.cfg names the vault password file {named}, and spec.vaultPassword names no Secret"
+            return (
+                None,
+                f"ansible.cfg names the vault password file {named}, and spec.vaultPassword names no Secret",
+            )
         return None, None
     if not named:
-        return None, "spec.vaultPassword names a Secret, and ansible.cfg names no vault password file"
-    if not isinstance(ref, dict) or not all(isinstance(ref.get(k), str) and ref[k] for k in ("name", "key")):
+        return (
+            None,
+            "spec.vaultPassword names a Secret, and ansible.cfg names no vault password file",
+        )
+    if not isinstance(ref, dict) or not all(
+        isinstance(ref.get(k), str) and ref[k] for k in ("name", "key")
+    ):
         return None, f"spec.vaultPassword.secretRef needs a name and a key: {ref!r}"
     return SecretRef(name=ref["name"], key=ref["key"]), None
 

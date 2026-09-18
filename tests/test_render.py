@@ -65,8 +65,12 @@ def repo(tmp_path: Path) -> Path:
     (root / ".git").mkdir()
     (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
     (root / "intended" / "structured_configs").mkdir(parents=True)
-    (root / "intended" / "structured_configs" / "dc1-spine1.yml").write_text("hostname: committed\n")
-    (root / "inventory.yml").write_text("all:\n  children:\n    FABRIC:\n      hosts:\n        dc1-spine1:\n")
+    (root / "intended" / "structured_configs" / "dc1-spine1.yml").write_text(
+        "hostname: committed\n"
+    )
+    (root / "inventory.yml").write_text(
+        "all:\n  children:\n    FABRIC:\n      hosts:\n        dc1-spine1:\n"
+    )
     (root / "group_vars" / "FABRIC.yml").write_text("fabric_name: FABRIC\n")
     (root / "build.yml").write_text(
         yaml.safe_dump(
@@ -164,7 +168,9 @@ def test_ansible_runs_in_the_copy_with_the_given_collections(ansible, repo, coll
     assert made["args"][0] == RENDER_PLAYBOOK
 
 
-def test_the_render_sets_the_three_values_above_the_repositorys_own(ansible, repo, collections, tmp_path):
+def test_the_render_sets_the_three_values_above_the_repositorys_own(
+    ansible, repo, collections, tmp_path
+):
     work = tmp_path / "work"
 
     built(ansible, repo, collections, work)
@@ -193,8 +199,14 @@ def test_the_inventory_is_passed_only_when_given(ansible, repo, collections, tmp
     assert args[args.index("-i") + 1] == "inventory/"
 
 
-def test_a_render_that_fails_names_the_lines_ansible_failed_on(ansible, repo, collections, tmp_path):
-    plan(ansible, exit=2, stderr='fatal: [dc1-spine1]: FAILED! => {"msg": "no node type"}\nPLAY RECAP\n')
+def test_a_render_that_fails_names_the_lines_ansible_failed_on(
+    ansible, repo, collections, tmp_path
+):
+    plan(
+        ansible,
+        exit=2,
+        stderr='fatal: [dc1-spine1]: FAILED! => {"msg": "no node type"}\nPLAY RECAP\n',
+    )
 
     out = built(ansible, repo, collections, tmp_path / "work")
 
@@ -239,7 +251,9 @@ def test_an_unreadable_structured_config_is_a_problem_not_a_missing_host(
     assert out.problem.startswith("dc1-spine2: its structured configuration is unreadable -- ")
 
 
-def test_a_structured_config_that_is_not_a_mapping_is_a_problem(ansible, repo, collections, tmp_path):
+def test_a_structured_config_that_is_not_a_mapping_is_a_problem(
+    ansible, repo, collections, tmp_path
+):
     plan(ansible, hosts={"dc1-spine1": "- hostname\n"})
 
     out = built(ansible, repo, collections, tmp_path / "work")
@@ -247,7 +261,9 @@ def test_a_structured_config_that_is_not_a_mapping_is_a_problem(ansible, repo, c
     assert out.problem == "dc1-spine1: its structured configuration is list, not a mapping"
 
 
-def test_a_play_that_imports_a_playbook_has_no_hosts_to_render(ansible, repo, collections, tmp_path):
+def test_a_play_that_imports_a_playbook_has_no_hosts_to_render(
+    ansible, repo, collections, tmp_path
+):
     (repo / "build.yml").write_text(yaml.safe_dump([{"import_playbook": "other.yml"}]))
 
     out = built(ansible, repo, collections, tmp_path / "work")

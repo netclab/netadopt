@@ -67,9 +67,7 @@ def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> I
 
     exe = ansible.beside(INVENTORY_EXE)
     if exe is None:
-        return Inventory(
-            source=source, problem=f"{INVENTORY_EXE} is missing beside {ansible.exe}"
-        )
+        return Inventory(source=source, problem=f"{INVENTORY_EXE} is missing beside {ansible.exe}")
 
     command = [str(exe), "--list"]
     if source:

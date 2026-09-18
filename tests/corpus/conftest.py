@@ -92,7 +92,11 @@ def _molecule(path: Path) -> dict[str, str | None]:
     ansible = data.get("ansible") or data.get("provisioner") or {}
     args = ((ansible.get("executor") or {}).get("args") or {}).get("ansible_playbook") or []
     inventory = next(
-        (arg.split("=", 1)[1] for arg in args if isinstance(arg, str) and arg.startswith("--inventory=")),
+        (
+            arg.split("=", 1)[1]
+            for arg in args
+            if isinstance(arg, str) and arg.startswith("--inventory=")
+        ),
         None,
     )
     return {"inventory": inventory, "converge": (ansible.get("playbooks") or {}).get("converge")}
@@ -308,8 +312,16 @@ def templated(
         values = tmp_path_factory.mktemp("chart") / "values.yaml"
         values.write_text(values_yaml(lab.values), encoding="utf-8")
         _templates[repo] = subprocess.run(
-            [helm, "template", HELM_RELEASE, str(root),
-             "--values", str(values), "--api-versions", HELM_API_VERSIONS],
+            [
+                helm,
+                "template",
+                HELM_RELEASE,
+                str(root),
+                "--values",
+                str(values),
+                "--api-versions",
+                HELM_API_VERSIONS,
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -336,7 +348,10 @@ def pool_file() -> Callable[[dict], str | None]:
         if node_id.get("pools_file"):
             return str(node_id["pools_file"])
         root_dir = hostvars.get("root_dir") or hostvars.get("inventory_dir")
-        output_dir = hostvars.get("output_dir") or f"{root_dir}/{hostvars.get('output_dir_name') or 'intended'}"
+        output_dir = (
+            hostvars.get("output_dir")
+            or f"{root_dir}/{hostvars.get('output_dir_name') or 'intended'}"
+        )
         return f"{output_dir}/data/{hostvars.get('fabric_name')}-ids.yml"
 
     return where

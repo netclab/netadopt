@@ -70,8 +70,4 @@ def _documents(templated: subprocess.CompletedProcess) -> list[dict]:
 
 def _named(documents: list[dict], kind: str) -> set[str]:
     """The names of every object of one Kubernetes kind."""
-    return {
-        (doc.get("metadata") or {}).get("name")
-        for doc in documents
-        if doc.get("kind") == kind
-    }
+    return {(doc.get("metadata") or {}).get("name") for doc in documents if doc.get("kind") == kind}

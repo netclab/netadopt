@@ -208,7 +208,7 @@ def report(
     if not found.usable:
         # An install without the extra, not a fact about the repository: a report
         # without Ansible would skip checks and still read as whole.
-        typer.echo(f"no Ansible: {found.problem} -- install as: uvx \"netadopt[avd]\" ...", err=True)
+        typer.echo(f'no Ansible: {found.problem} -- install as: uvx "netadopt[avd]" ...', err=True)
         raise typer.Exit(1)
     config = read_ansible_cfg(repo)
     listed = read_inventory(found, repo, inventory)
@@ -222,7 +222,9 @@ def report(
     refused = _name_refused(wanted)
     spelled = rfc1123(wanted) or "fabric"
     inputs = fabric_inputs(var_files, spelled)
-    adoption = _adopt(repo, playbook, source, play, spelled, config, var_files) if playbook else None
+    adoption = (
+        _adopt(repo, playbook, source, play, spelled, config, var_files) if playbook else None
+    )
 
     # Every part is reported before anything decides the run failed: an unreadable
     # inventory does not hide a readable playbook.
@@ -286,7 +288,9 @@ def emit(
     wanted = name or repo.resolve().name
     spelled = rfc1123(wanted)
     if not spelled:
-        typer.echo(f"nothing emitted: no name can be spelled from {wanted!r} -- pass --name", err=True)
+        typer.echo(
+            f"nothing emitted: no name can be spelled from {wanted!r} -- pass --name", err=True
+        )
         raise typer.Exit(2)
     if len(spelled) > LABEL_MAX:
         # the name is also the value of the label a Fabric selects its inputs by
@@ -378,7 +382,7 @@ def lab(
 
     found = resolve_ansible()
     if not found.usable:
-        typer.echo(f"no Ansible: {found.problem} -- install as: uvx \"netadopt[avd]\" ...", err=True)
+        typer.echo(f'no Ansible: {found.problem} -- install as: uvx "netadopt[avd]" ...', err=True)
         raise typer.Exit(1)
 
     root = cache_root()
@@ -447,9 +451,7 @@ def _emit_notes(repo: Path, adoption: Adoption) -> list[str]:
     # would replace this Fabric in the cluster.
     for other in adoption.other_plays:
         what = (
-            NO_ROLE
-            if _no_role(other)
-            else f"carry it with --play {other.index} and its own --name"
+            NO_ROLE if _no_role(other) else f"carry it with --play {other.index} and its own --name"
         )
         said.append(f"{_label(other)}: not carried -- {what}")
     if adoption.vault_file:
@@ -571,7 +573,11 @@ def _vars_row(found: VarFiles) -> tuple[str, ...]:
 
     groups = sum(1 for file in found.files if file.vars_dir == GROUP_VARS)
     hosts = len(found.files) - groups
-    return ("Variables", _count(len(found.files), "file"), f"group_vars {groups}, host_vars {hosts}")
+    return (
+        "Variables",
+        _count(len(found.files), "file"),
+        f"group_vars {groups}, host_vars {hosts}",
+    )
 
 
 def _playbook_row(repo: Path, playbook: str | None, read: Playbook | None) -> tuple[str, ...]:
@@ -711,7 +717,9 @@ def _warnings(
         if piece.setting is None:
             rows.append((piece.path, "an executable inventory, run whenever Ansible reads it"))
         else:
-            rows.append((piece.path, f"code Ansible loads, named by {piece.setting} in ansible.cfg"))
+            rows.append(
+                (piece.path, f"code Ansible loads, named by {piece.setting} in ansible.cfg")
+            )
 
     fabric_documents = adoption.documents if adoption else ()
     for where, names in plain_passwords(fabric_documents + inputs.documents):
@@ -721,7 +729,9 @@ def _warnings(
     for file in found.files:
         if not _knows(listed, file.vars_dir, file.scope):
             level = "group" if file.vars_dir == GROUP_VARS else "host"
-            rows.append((_relative(file.path, repo), f"{file.scope} is no {level} in the inventory"))
+            rows.append(
+                (_relative(file.path, repo), f"{file.scope} is no {level} in the inventory")
+            )
 
     for note in inputs.notes:
         rows.append(_split(note))

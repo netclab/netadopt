@@ -63,7 +63,8 @@ def test_only_ethernet_n_is_cabled_on_ceos_and_the_rest_is_named():
     lab = netclab_values(
         {
             "leaf": rendered(
-                cable("Ethernet1/1", "spine", "Ethernet1"), cable("Ethernet2.10", "spine", "Ethernet2")
+                cable("Ethernet1/1", "spine", "Ethernet1"),
+                cable("Ethernet2.10", "spine", "Ethernet2"),
             ),
             "spine": rendered(),
         }
@@ -80,7 +81,9 @@ def test_ethernet_in_any_case_and_eth_are_one_interface_on_ceos():
     # EOS reads Ethernet1, ethernet1 and Eth1 alike
     lab = netclab_values(
         {
-            "leaf": rendered(cable("ethernet1", "spine", "Eth1"), cable("Eth2.10", "spine", "ETHERNET2.10")),
+            "leaf": rendered(
+                cable("ethernet1", "spine", "Eth1"), cable("Eth2.10", "spine", "ETHERNET2.10")
+            ),
             "spine": rendered(),
         }
     )
@@ -109,7 +112,9 @@ def test_a_subinterface_rides_its_cabled_parent_without_a_word():
 
 
 def test_a_peer_outside_the_fabric_is_a_linux_node_by_default():
-    lab = netclab_values({"leaf": rendered(cable("Ethernet5", "dc1-leaf1-server1", "PCI1", "server"))})
+    lab = netclab_values(
+        {"leaf": rendered(cable("Ethernet5", "dc1-leaf1-server1", "PCI1", "server"))}
+    )
 
     assert nodes(lab)["dc1-leaf1-server1"] == {
         "name": "dc1-leaf1-server1",
@@ -135,7 +140,9 @@ def test_a_linux_port_name_is_spelled_for_linux_and_named():
 
 
 def test_a_linux_port_name_over_15_bytes_is_not_cabled():
-    lab = netclab_values({"leaf": rendered(cable("Ethernet5", "server1", "Management-Port-1", "server"))})
+    lab = netclab_values(
+        {"leaf": rendered(cable("Ethernet5", "server1", "Management-Port-1", "server"))}
+    )
 
     assert lab.values["topology"]["networks"] == []
     assert lab.notes == (
@@ -210,7 +217,10 @@ def test_a_host_no_node_name_can_be_spelled_from_is_left_out_with_its_cables():
     assert lab.problem is None
     assert sorted(nodes(lab)) == ["leaf2", "spine1"]
     assert nodes(lab)["spine1"]["interfaces"] == [{"name": "eth2", "network": "n1"}]
-    assert "7010tx-leaf1: left out, with its cables -- no node name can be spelled from it" in lab.notes
+    assert (
+        "7010tx-leaf1: left out, with its cables -- no node name can be spelled from it"
+        in lab.notes
+    )
 
 
 def test_connected_none_leaves_the_peer_out_and_names_it():
@@ -236,7 +246,10 @@ def test_connected_ceos_cables_only_an_ethernet_n_peer_interface():
     )
 
     assert nodes(lab)["firewall1"]["interfaces"] == [{"name": "eth3", "network": "n1"}]
-    assert "leaf Ethernet5 - server1 PCI1: not cabled -- no interface for server1 from 'PCI1'" in lab.notes
+    assert (
+        "leaf Ethernet5 - server1 PCI1: not cabled -- no interface for server1 from 'PCI1'"
+        in lab.notes
+    )
 
 
 def test_more_than_two_ends_are_one_bridge():

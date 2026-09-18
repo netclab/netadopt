@@ -110,7 +110,9 @@ def netclab_values(
             if peer in rendered:
                 far = _ceos_interface(peer_interface)
             elif connected == NONE:
-                notes.append(f"{where}: not cabled -- {peer} is outside the fabric, --connected none")
+                notes.append(
+                    f"{where}: not cabled -- {peer} is outside the fabric, --connected none"
+                )
                 continue
             elif connected == CEOS:
                 far = _ceos_interface(peer_interface)
@@ -131,7 +133,9 @@ def netclab_values(
                         renamed.add((peer, far))
                         notes.append(f"{peer} {peer_interface} is spelled {far}")
             if far is None:
-                notes.append(f"{where}: not cabled -- no interface for {peer} from {peer_interface!r}")
+                notes.append(
+                    f"{where}: not cabled -- no interface for {peer} from {peer_interface!r}"
+                )
                 continue
 
             join((host, local), (peer, far))
@@ -147,7 +151,9 @@ def netclab_values(
 
     for host, carrier, name in riding:
         if (host, carrier) not in parent:
-            notes.append(f"{host} {name}: not cabled -- only EthernetN is, and {carrier} has no cable")
+            notes.append(
+                f"{host} {name}: not cabled -- only EthernetN is, and {carrier} has no cable"
+            )
 
     spelled, problem = _spell(node_types, notes)
     if problem:
@@ -210,7 +216,9 @@ def _spell(node_types: Mapping[str, str], notes: list[str]) -> tuple[dict[str, s
     for host in sorted(node_types):
         name = rfc1123(host)
         if not name or not name[0].isalpha() or len(name) > LABEL_MAX:
-            notes.append(f"{host}: left out, with its cables -- no node name can be spelled from it")
+            notes.append(
+                f"{host}: left out, with its cables -- no node name can be spelled from it"
+            )
             continue
         if name in owner:
             return spelled, f"{owner[name]} and {host} are both spelled {name}"

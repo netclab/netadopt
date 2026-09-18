@@ -84,7 +84,9 @@ def render(
         return Rendered(problem=f"no play [{play}] -- {read.path.name} holds {held}")
     raw = read.plays[play].raw
     if any(key in raw for key in IMPORT_PLAYBOOK_KEYS):
-        return Rendered(problem=f"play [{play}] imports another playbook and has no hosts of its own")
+        return Rendered(
+            problem=f"play [{play}] imports another playbook and has no hosts of its own"
+        )
 
     root = work / COPY
     out = work / STRUCTURED
@@ -174,10 +176,14 @@ def _read(out: Path) -> Rendered:
         try:
             loaded = ansible_yaml.load(file.read_text(encoding="utf-8"), file)
         except (OSError, ValueError, yaml.YAMLError) as err:
-            return Rendered(problem=f"{file.stem}: its structured configuration is unreadable -- {err}")
+            return Rendered(
+                problem=f"{file.stem}: its structured configuration is unreadable -- {err}"
+            )
         if not isinstance(loaded, dict):
             what = type(loaded).__name__
-            return Rendered(problem=f"{file.stem}: its structured configuration is {what}, not a mapping")
+            return Rendered(
+                problem=f"{file.stem}: its structured configuration is {what}, not a mapping"
+            )
         # A hostname may hold dots, and only the format's suffix comes off.
         hosts[file.stem] = loaded
     if not hosts:

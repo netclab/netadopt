@@ -58,7 +58,9 @@ def find_code(repo: Path, config: AnsibleCfg, sources: tuple[str, ...]) -> tuple
 
 
 def executable_inventories(repo: Path, sources: tuple[str, ...]) -> tuple[Code, ...]:
-    return tuple(Code(_relative(path, repo)) for path in _inventory_files(repo, sources) if is_script(path))
+    return tuple(
+        Code(_relative(path, repo)) for path in _inventory_files(repo, sources) if is_script(path)
+    )
 
 
 def code_directories(repo: Path, config: AnsibleCfg) -> tuple[Code, ...]:

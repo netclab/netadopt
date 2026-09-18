@@ -171,7 +171,9 @@ def test_a_directory_that_is_not_empty_is_refused(tmp_path: Path):
 
 
 def test_an_inventory_outside_the_repository_is_refused(tmp_path: Path):
-    built = reconstruct([fabric_doc({"defaults": {"inventory": "/etc/ansible/hosts"}})], tmp_path / "r")
+    built = reconstruct(
+        [fabric_doc({"defaults": {"inventory": "/etc/ansible/hosts"}})], tmp_path / "r"
+    )
 
     assert not built.usable
     assert "/etc/ansible/hosts" in built.problem
@@ -216,14 +218,18 @@ def test_a_secret_named_with_no_vault_password_file_writes_nothing(tmp_path: Pat
     assert "names no vault password file" in built.problem
 
 
-def pooled(path: str = "intended/data/ids.yml", beside: str = "playbook") -> tuple[list[dict], dict]:
+def pooled(
+    path: str = "intended/data/ids.yml", beside: str = "playbook"
+) -> tuple[list[dict], dict]:
     return pool_objects("lab", [PoolFile(path=path, beside=beside, text="node_id_pools: {}\n")])
 
 
 def test_a_pool_file_goes_back_where_the_fabric_names_it(tmp_path: Path):
     entries, config_map = pooled()
 
-    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo")
+    built = reconstruct(
+        [fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo"
+    )
 
     assert built.usable, built.problem
     assert (built.root / "intended/data/ids.yml").read_text() == "node_id_pools: {}\n"
@@ -232,7 +238,9 @@ def test_a_pool_file_goes_back_where_the_fabric_names_it(tmp_path: Path):
 def test_a_pool_beside_the_inventory_follows_the_inventory(tmp_path: Path):
     entries, config_map = pooled(beside="inventory")
 
-    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo")
+    built = reconstruct(
+        [fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo"
+    )
 
     assert built.usable, built.problem
     assert "inventory/intended/data/ids.yml" in built.files
@@ -240,10 +248,13 @@ def test_a_pool_beside_the_inventory_follows_the_inventory(tmp_path: Path):
 
 def test_a_named_file_goes_back_where_it_sat(tmp_path: Path):
     entries, config_map = named_file_objects(
-        "lab", [NamedFile(path="templates/mlag/ethernet-interfaces.j2", beside="playbook", text="MLAG\n")]
+        "lab",
+        [NamedFile(path="templates/mlag/ethernet-interfaces.j2", beside="playbook", text="MLAG\n")],
     )
 
-    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, files=entries), config_map], tmp_path / "repo")
+    built = reconstruct(
+        [fabric("lab", PLAY, GROUPS, {}, files=entries), config_map], tmp_path / "repo"
+    )
 
     assert built.usable, built.problem
     assert (built.root / "templates/mlag/ethernet-interfaces.j2").read_text() == "MLAG\n"
@@ -347,7 +358,16 @@ def test_one_group_under_both_roots_resolves_as_ansible_ranks_them(tmp_path: Pat
         path.write_text(body)
 
     result = CliRunner().invoke(
-        app, ["avd", "emit", str(source), "--playbook", "build.yml", "--inventory", "inventory/hosts.yml"]
+        app,
+        [
+            "avd",
+            "emit",
+            str(source),
+            "--playbook",
+            "build.yml",
+            "--inventory",
+            "inventory/hosts.yml",
+        ],
     )
     assert result.exit_code == 0, result.stderr
     built = reconstruct(yaml.safe_load_all(result.stdout), tmp_path / "rebuilt")

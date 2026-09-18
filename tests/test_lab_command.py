@@ -177,9 +177,7 @@ def test_the_ceos_values_are_written_only_when_given(repo, ansible, collections)
     plain = nodes(lab(repo, "--playbook", "build.yml").stdout)[0]
     assert set(plain) == {"name", "type", "interfaces"}
 
-    given = lab(
-        repo, "--playbook", "build.yml", "--ceos-image", "ceos:4.34.0F", "--ceos-cpu", "2"
-    )
+    given = lab(repo, "--playbook", "build.yml", "--ceos-image", "ceos:4.34.0F", "--ceos-cpu", "2")
     node = nodes(given.stdout)[0]
     assert (node["image"], node["cpu"]) == ("ceos:4.34.0F", "2")
     assert "memory" not in node

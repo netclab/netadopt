@@ -121,7 +121,9 @@ def test_what_emit_carries_is_under_carried(repo, ansible):
 
 
 def test_another_play_and_the_vault_password_are_under_not_carried(repo, ansible):
-    write(repo, {"ansible.cfg": "[defaults]\ninventory=inventory.yml\nvault_password_file=.vault\n"})
+    write(
+        repo, {"ansible.cfg": "[defaults]\ninventory=inventory.yml\nvault_password_file=.vault\n"}
+    )
 
     ansible()
     result = report(repo, "--playbook", "build.yml")
@@ -243,9 +245,7 @@ def test_the_renders_row_names_no_playbook_it_was_not_given(repo, ansible):
     ansible()
     result = report(repo)
 
-    assert f"Renders not measured netadopt avd lab {repo}" in squeezed(
-        result.output.splitlines()
-    )
+    assert f"Renders not measured netadopt avd lab {repo}" in squeezed(result.output.splitlines())
 
 
 def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo, ansible):
@@ -280,7 +280,7 @@ def test_with_no_ansible_beside_it_only_that_is_said(repo, tmp_path, monkeypatch
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert 'no Ansible: ' in result.stderr
+    assert "no Ansible: " in result.stderr
     assert 'install as: uvx "netadopt[avd]"' in result.stderr
 
 

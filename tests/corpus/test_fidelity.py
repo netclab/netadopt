@@ -27,7 +27,9 @@ NOT_COMPARED = frozenset({"ansible_inventory_sources", "vars"})
 
 # Host lists whose order Ansible leaves to hashing: it moves with PYTHONHASHSEED on one
 # repository. The hosts are compared, their order is not.
-UNORDERED = frozenset({"ansible_play_batch", "ansible_play_hosts", "ansible_play_hosts_all", "play_hosts"})
+UNORDERED = frozenset(
+    {"ansible_play_batch", "ansible_play_hosts", "ansible_play_hosts_all", "play_hosts"}
+)
 
 
 def test_the_rebuilt_repository_resolves_as_the_source_does(
@@ -60,7 +62,9 @@ def test_the_rebuilt_repository_resolves_as_the_source_does(
         for key in sorted(a.keys() | b.keys()):
             if a.get(key, MISSING) != b.get(key, MISSING):
                 differing.setdefault(key, []).append(host)
-    assert not differing, {key: f"{hosts[0]} and {len(hosts) - 1} more" for key, hosts in differing.items()}
+    assert not differing, {
+        key: f"{hosts[0]} and {len(hosts) - 1} more" for key, hosts in differing.items()
+    }
 
     # A file read beside the vars, not through them, is judged by its bytes: the pool
     # file, where each side's own resolved vars say it is.

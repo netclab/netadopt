@@ -101,9 +101,7 @@ def fabric(
     """
     spec: dict = {"inputs": {"matchLabels": {FABRIC_LABEL: name}}}
     if vault_password:
-        spec["vaultPassword"] = {
-            "secretRef": {"name": vault_secret(name), "key": VAULT_SECRET_KEY}
-        }
+        spec["vaultPassword"] = {"secretRef": {"name": vault_secret(name), "key": VAULT_SECRET_KEY}}
     if pools:
         spec["pools"] = pools
     if files:
@@ -227,8 +225,7 @@ def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
         taken.add(name)
         if len(name) > NAME_MAX:
             problems.append(
-                f"{scope}: not emitted -- {name} is {len(name)} characters, "
-                f"a name holds {NAME_MAX}"
+                f"{scope}: not emitted -- {name} is {len(name)} characters, a name holds {NAME_MAX}"
             )
             continue
 

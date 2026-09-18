@@ -39,4 +39,5 @@ jobs:
 
       - run: uv sync --locked
       - run: uvx ruff check
+      - run: uvx ruff format --check
       - run: uv run pytest -q

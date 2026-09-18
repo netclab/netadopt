@@ -71,7 +71,11 @@ def test_groups_and_hostvars_come_back_split(install, tmp_path):
 
 
 def test_a_host_with_no_vars_is_still_a_host(install, tmp_path):
-    listed_json = {"_meta": {"hostvars": {}}, "all": {"children": ["FABRIC"]}, "FABRIC": {"hosts": ["h1"]}}
+    listed_json = {
+        "_meta": {"hostvars": {}},
+        "all": {"children": ["FABRIC"]},
+        "FABRIC": {"hosts": ["h1"]},
+    }
     ansible = install(json.dumps(listed_json))
 
     listed = read_inventory(ansible, tmp_path)

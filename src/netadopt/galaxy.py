@@ -30,7 +30,9 @@ from netadopt.ansible import Ansible
 # Looked up next to ansible-playbook, not on PATH.
 GALAXY_EXE = "ansible-galaxy"
 
-ARTIFACTS = "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts"
+ARTIFACTS = (
+    "https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts"
+)
 
 # Seconds: one archive, and one install -- by name, which resolves against Galaxy.
 DOWNLOAD_TIMEOUT = 120
@@ -60,10 +62,27 @@ class Archive:
 # arista.avd first, then the collections ansible-galaxy resolves for it. Moved with the
 # avd submodule, by hand.
 ARCHIVES = (
-    Archive("arista", "avd", "6.4.0", "99342247e89bb15ddfbb08a4014d1e3c7e92f0c9b34e901a43dc39ad1bda28bf"),
-    Archive("arista", "eos", "12.2.0", "eaf585c7fdcf8d10c920f3a47409ef010edfae15fde7bae901d66538400b4c17"),
-    Archive("ansible", "netcommon", "8.6.2", "4040e782c26ddb97979e03a07f4894a2dc82f59c1e71e7f5c5cb2d5c6a31628a"),
-    Archive("ansible", "utils", "6.1.0", "e29255d2a41e90b4de68524df4124100b51a0525167459e5e2def00deed97799"),
+    Archive(
+        "arista", "avd", "6.4.0", "99342247e89bb15ddfbb08a4014d1e3c7e92f0c9b34e901a43dc39ad1bda28bf"
+    ),
+    Archive(
+        "arista",
+        "eos",
+        "12.2.0",
+        "eaf585c7fdcf8d10c920f3a47409ef010edfae15fde7bae901d66538400b4c17",
+    ),
+    Archive(
+        "ansible",
+        "netcommon",
+        "8.6.2",
+        "4040e782c26ddb97979e03a07f4894a2dc82f59c1e71e7f5c5cb2d5c6a31628a",
+    ),
+    Archive(
+        "ansible",
+        "utils",
+        "6.1.0",
+        "e29255d2a41e90b4de68524df4124100b51a0525167459e5e2def00deed97799",
+    ),
 )
 
 
@@ -142,7 +161,9 @@ def ensure_collections(
                 if not _installed(root, avd):
                     raise
     except OSError as err:
-        return Collections(notes=tuple(notes), problem=f"collections not installed in {root}: {err}")
+        return Collections(
+            notes=tuple(notes), problem=f"collections not installed in {root}: {err}"
+        )
     return Collections(path=root, notes=tuple(notes))
 
 

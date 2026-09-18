@@ -18,8 +18,8 @@ from pathlib import Path
 # two do not always agree.
 PLAYBOOK_EXE = "ansible-playbook"
 
-_CORE = re.compile(r"\[core ([^\]]+)\]")          # 2.10+  "ansible-playbook [core 2.16.3]"
-_OLD = re.compile(r"^\S+\s+([0-9][^\s]*)")        # 2.9    "ansible-playbook 2.9.27"
+_CORE = re.compile(r"\[core ([^\]]+)\]")  # 2.10+  "ansible-playbook [core 2.16.3]"
+_OLD = re.compile(r"^\S+\s+([0-9][^\s]*)")  # 2.9    "ansible-playbook 2.9.27"
 
 
 @dataclass(frozen=True)

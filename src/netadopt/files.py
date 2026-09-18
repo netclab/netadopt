@@ -38,9 +38,7 @@ class Named:
     notes: tuple[str, ...] = ()
 
 
-def find_named_files(
-    found: VarFiles, play: dict, groups: dict, repo: Path, playbook: str
-) -> Named:
+def find_named_files(found: VarFiles, play: dict, groups: dict, repo: Path, playbook: str) -> Named:
     """Every file a string in the vars, the play or the inventory names, read.
 
     Templates that could not be carried are in the notes.
@@ -66,7 +64,14 @@ def find_named_files(
             if template:
                 notes.append(f"{value}: a template outside the repository -- not carried")
             continue
-        at = next((str(path) for path in (PurePosixPath(TEMPLATES) / pure, pure) if _is_file(base / path)), None)
+        at = next(
+            (
+                str(path)
+                for path in (PurePosixPath(TEMPLATES) / pure, pure)
+                if _is_file(base / path)
+            ),
+            None,
+        )
         if at is None:
             if template:
                 notes.append(f"{value}: no such template beside the playbook -- not carried")
@@ -79,7 +84,9 @@ def find_named_files(
             notes.append(f"{at}: could not be read -- {err}")
             continue
         if _PULLS_IN.search(text):
-            notes.append(f"{at}: pulls in other templates, which no design names -- those are not carried")
+            notes.append(
+                f"{at}: pulls in other templates, which no design names -- those are not carried"
+            )
         files[at] = NamedFile(path=at, beside=PLAYBOOK_ROOT, text=text)
     return Named(files=tuple(files.values()), notes=tuple(notes))
 

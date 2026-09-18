@@ -110,9 +110,13 @@ def test_a_wrong_sha256_installs_by_name_and_says_why(ansible, tmp_path):
     found = ensure_collections(ansible, root, (AVD, EOS), lambda url: b"tampered")
 
     assert found.usable, found.problem
-    assert calls(ansible) == [["collection", "install", "arista.avd:==6.4.0", "-p", calls(ansible)[0][-1]]]
+    assert calls(ansible) == [
+        ["collection", "install", "arista.avd:==6.4.0", "-p", calls(ansible)[0][-1]]
+    ]
     [note] = found.notes
-    assert f"{AVD.file} has sha256 {hashlib.sha256(b'tampered').hexdigest()}, not {AVD.sha256}" in note
+    assert (
+        f"{AVD.file} has sha256 {hashlib.sha256(b'tampered').hexdigest()}, not {AVD.sha256}" in note
+    )
     assert note.endswith("installed by name from the configured galaxy servers")
 
 

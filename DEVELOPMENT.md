@@ -17,8 +17,12 @@ have it: `git submodule update --init`.
 
 ```
 uvx ruff check
+uvx ruff format --check
 uv run pytest --ignore=tests/corpus
 ```
+
+Ruff first, and every finding fixed before the tests run: a fix changes the code the
+tests must see.
 
 When the change touches `src/netadopt/`, the whole suite, corpus tier included:
 
@@ -26,8 +30,9 @@ When the change touches `src/netadopt/`, the whole suite, corpus tier included:
 uv run pytest
 ```
 
-CI runs `uvx ruff check` and `uv run pytest` with the submodule checked out, and the
-release workflow calls the same one, so a version is published after exactly these.
+CI runs `uvx ruff check`, `uvx ruff format --check` and `uv run pytest`, and the release
+workflow calls the same one, so a version is published after exactly these. The `avd`
+submodule is checked out for the corpus tier; ruff leaves it out, since it is AVD's code.
 
 ## The two test tiers
 
