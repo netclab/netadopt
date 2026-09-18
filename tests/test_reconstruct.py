@@ -35,8 +35,11 @@ PLAY = {"name": "Build", "hosts": "FABRIC", "gather_facts": False, "tasks": []}
 GROUPS = {"all": {"children": {"FABRIC": {"hosts": {"dc1-spine1": {"ansible_host": "10.0.0.1"}}}}}}
 
 
-def fabric_doc(cfg: dict | None = None, name: str = "lab", vault: bool = False) -> dict:
-    return fabric(name, PLAY, GROUPS, cfg or {}, vault_password=vault)
+def fabric_doc(
+    cfg: dict | None = None, name: str = "lab", vault: bool = False, inputs: tuple[dict, ...] = ()
+) -> dict:
+    listed = (doc["metadata"]["name"] for doc in inputs)
+    return fabric(name, listed, PLAY, GROUPS, cfg or {}, vault_password=vault)
 
 
 def input_doc(
@@ -45,12 +48,13 @@ def input_doc(
     beside: str = "inventory",
     host: bool = False,
     fabric_name: str = "lab",
+    name: str | None = None,
 ) -> dict:
     return {
         "apiVersion": API_VERSION,
         "kind": FABRIC_INPUT,
         "metadata": {
-            "name": f"{fabric_name}-{'host-' if host else ''}{scope.lower()}",
+            "name": name or f"{fabric_name}-{'host-' if host else ''}{scope.lower()}",
             "labels": {FABRIC_LABEL: fabric_name},
         },
         "spec": {
@@ -67,11 +71,11 @@ def read(root: Path, name: str) -> object:
 
 def test_the_inventory_goes_where_ansible_cfg_names_it(tmp_path: Path):
     cfg = {"defaults": {"inventory": "inventory.yml"}}
-    documents = [
-        fabric_doc(cfg),
+    inputs = (
         input_doc("FABRIC", {"fabric_name": "FABRIC"}),
         input_doc("dc1-spine1", {"id": 1}, host=True),
-    ]
+    )
+    documents = [fabric_doc(cfg, inputs=inputs), *inputs]
 
     built = reconstruct(documents, tmp_path / "repo")
 
@@ -92,11 +96,8 @@ def test_the_inventory_goes_where_ansible_cfg_names_it(tmp_path: Path):
 
 def test_with_no_inventory_in_ansible_cfg_it_gets_a_directory_of_its_own(tmp_path: Path):
     # twodc: no ansible.cfg, vars beside the inventory, and a playbook outside it
-    documents = [
-        fabric_doc(),
-        input_doc("FABRIC", {"a": 1}),
-        input_doc("DC1", {"b": 2}, beside="playbook"),
-    ]
+    inputs = (input_doc("FABRIC", {"a": 1}), input_doc("DC1", {"b": 2}, beside="playbook"))
+    documents = [fabric_doc(inputs=inputs), *inputs]
 
     built = reconstruct(documents, tmp_path / "repo")
 
@@ -108,7 +109,8 @@ def test_with_no_inventory_in_ansible_cfg_it_gets_a_directory_of_its_own(tmp_pat
 
 
 def test_an_inventory_directory_named_in_ansible_cfg_gets_its_file_inside(tmp_path: Path):
-    documents = [fabric_doc({"defaults": {"inventory": "./inventory/"}}), input_doc("FABRIC", {})]
+    inputs = (input_doc("FABRIC", {}),)
+    documents = [fabric_doc({"defaults": {"inventory": "./inventory/"}}, inputs=inputs), *inputs]
 
     built = reconstruct(documents, tmp_path / "repo")
 
@@ -116,22 +118,41 @@ def test_an_inventory_directory_named_in_ansible_cfg_gets_its_file_inside(tmp_pa
     assert "inventory/group_vars/FABRIC.yml" in built.files
 
 
-def test_only_the_inputs_the_fabric_selects_are_written(tmp_path: Path):
-    documents = [
-        fabric_doc(),
-        input_doc("FABRIC", {"selected": True}),
-        input_doc("FABRIC", {"selected": False}, fabric_name="other"),
-    ]
+def test_only_the_inputs_the_fabric_lists_are_written(tmp_path: Path):
+    listed = input_doc("FABRIC", {"listed": True})
+    labelled = input_doc("FABRIC", {"listed": False}, name="lab-fabric-too")
+    documents = [fabric_doc(inputs=(listed,)), listed, labelled]
 
     built = reconstruct(documents, tmp_path / "repo")
 
     assert built.usable, built.problem
-    assert read(built.root, "inventory/group_vars/FABRIC.yml") == {"selected": True}
+    assert read(built.root, "inventory/group_vars/FABRIC.yml") == {"listed": True}
+
+
+def test_an_input_listed_and_not_found_writes_nothing(tmp_path: Path):
+    listed = input_doc("FABRIC", {"a": 1})
+
+    built = reconstruct([fabric_doc(inputs=(listed,))], tmp_path / "repo")
+
+    assert not built.usable
+    assert "listed in spec.inputs and not found: lab-fabric" in built.problem
+    assert not (tmp_path / "repo").exists()
+
+
+def test_inputs_that_are_not_a_list_of_names_write_nothing(tmp_path: Path):
+    document = fabric_doc()
+    document["spec"]["inputs"] = {"matchLabels": {FABRIC_LABEL: "lab"}}
+
+    built = reconstruct([document, input_doc("FABRIC", {"a": 1})], tmp_path / "repo")
+
+    assert not built.usable
+    assert "spec.inputs is not a list of FabricInput names" in built.problem
 
 
 def test_a_vaulted_value_goes_back_as_a_vault_tag(tmp_path: Path):
     secret = {VAULT_KEY: "$ANSIBLE_VAULT;1.1;AES256\n616263\n"}
-    documents = [fabric_doc(), input_doc("FABRIC", {"ansible_password": secret})]
+    inputs = (input_doc("FABRIC", {"ansible_password": secret}),)
+    documents = [fabric_doc(inputs=inputs), *inputs]
 
     built = reconstruct(documents, tmp_path / "repo")
 
@@ -152,7 +173,8 @@ def test_default_and_percent_in_ansible_cfg_survive(tmp_path: Path):
 
 
 def test_nothing_is_written_when_something_cannot_be(tmp_path: Path):
-    documents = [fabric_doc(), input_doc("FABRIC", {"a": 1}), input_doc("FABRIC", {"b": 2})]
+    inputs = (input_doc("FABRIC", {"a": 1}), input_doc("FABRIC", {"b": 2}, name="lab-fabric-b"))
+    documents = [fabric_doc(inputs=inputs), *inputs]
 
     built = reconstruct(documents, tmp_path / "repo")
 
@@ -180,10 +202,8 @@ def test_an_inventory_outside_the_repository_is_refused(tmp_path: Path):
 
 
 def test_vars_beside_the_playbook_cannot_share_the_inventorys_directory(tmp_path: Path):
-    documents = [
-        fabric_doc({"defaults": {"inventory": "inventory.yml"}}),
-        input_doc("FABRIC", {"a": 1}, beside="playbook"),
-    ]
+    inputs = (input_doc("FABRIC", {"a": 1}, beside="playbook"),)
+    documents = [fabric_doc({"defaults": {"inventory": "inventory.yml"}}, inputs=inputs), *inputs]
 
     built = reconstruct(documents, tmp_path / "repo")
 
@@ -228,7 +248,7 @@ def test_a_pool_file_goes_back_where_the_fabric_names_it(tmp_path: Path):
     entries, config_map = pooled()
 
     built = reconstruct(
-        [fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo"
+        [fabric("lab", (), PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo"
     )
 
     assert built.usable, built.problem
@@ -239,7 +259,7 @@ def test_a_pool_beside_the_inventory_follows_the_inventory(tmp_path: Path):
     entries, config_map = pooled(beside="inventory")
 
     built = reconstruct(
-        [fabric("lab", PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo"
+        [fabric("lab", (), PLAY, GROUPS, {}, pools=entries), config_map], tmp_path / "repo"
     )
 
     assert built.usable, built.problem
@@ -253,7 +273,7 @@ def test_a_named_file_goes_back_where_it_sat(tmp_path: Path):
     )
 
     built = reconstruct(
-        [fabric("lab", PLAY, GROUPS, {}, files=entries), config_map], tmp_path / "repo"
+        [fabric("lab", (), PLAY, GROUPS, {}, files=entries), config_map], tmp_path / "repo"
     )
 
     assert built.usable, built.problem
@@ -263,7 +283,7 @@ def test_a_named_file_goes_back_where_it_sat(tmp_path: Path):
 def test_a_pool_whose_config_map_is_missing_writes_nothing(tmp_path: Path):
     entries, _ = pooled()
 
-    built = reconstruct([fabric("lab", PLAY, GROUPS, {}, pools=entries)], tmp_path / "repo")
+    built = reconstruct([fabric("lab", (), PLAY, GROUPS, {}, pools=entries)], tmp_path / "repo")
 
     assert not built.usable
     assert "no ConfigMap 'lab-pools'" in built.problem

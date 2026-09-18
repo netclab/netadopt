@@ -69,7 +69,7 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
     """Write repo' for one Fabric under `root`, which must be empty or absent.
 
     `fabric` names the Fabric when the documents hold several. Its inputs are the
-    FabricInputs its `spec.inputs` selects, and no others. Nothing is written unless
+    FabricInputs its `spec.inputs` lists by name, and no others. Nothing is written unless
     everything can be.
     """
     documents = list(documents)
@@ -109,10 +109,14 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
     plan(inventory, ansible_yaml.dump(spec.get("groups") or {}), "groups")
     plan(PurePosixPath(PLAYBOOK), ansible_yaml.dump([spec.get("play") or {}]), "play")
 
-    selector = (spec.get("inputs") or {}).get("matchLabels") or {}
-    if not selector:
-        # an empty selector selects everything, other fabrics' inputs included
-        problems.append("the Fabric selects no inputs: spec.inputs.matchLabels is empty")
+    listed = spec.get("inputs")
+    if not isinstance(listed, list) or not all(isinstance(name, str) for name in listed):
+        problems.append("spec.inputs is not a list of FabricInput names")
+        listed = []
+    by_name = {_name(doc): doc for doc in documents if doc.get("kind") == FABRIC_INPUT}
+    missing = [name for name in listed if name not in by_name]
+    if missing:
+        problems.append(f"listed in spec.inputs and not found: {', '.join(missing)}")
     bases = {INVENTORY_ROOT: inventory.parent, PLAYBOOK_ROOT: _ROOT}
 
     carried = [("pool", entry) for entry in spec.get("pools") or []]
@@ -141,15 +145,10 @@ def reconstruct(documents: Iterable[dict], root: Path, fabric: str | None = None
             continue
         plan(bases[beside] / path, text, what)
 
-    for doc in documents:
-        labels = (doc.get("metadata") or {}).get("labels") or {}
-        if (
-            doc.get("kind") != FABRIC_INPUT
-            or not selector
-            or not selector.items() <= labels.items()
-        ):
+    for what in dict.fromkeys(listed):
+        doc = by_name.get(what)
+        if doc is None:
             continue
-        what = _name(doc)
         input_spec = doc.get("spec") or {}
 
         beside = input_spec.get("beside")

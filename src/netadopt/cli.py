@@ -147,6 +147,7 @@ def _adopt(
     name: str,
     config: AnsibleCfg,
     found: VarFiles,
+    inputs: Emitted,
 ) -> Adoption:
     """The Fabric named `name`, carrying play `index`, and the ConfigMaps of its files."""
     if playbook is None:
@@ -171,6 +172,7 @@ def _adopt(
     vault_file = config.vault_password_file
     document = fabric(
         name,
+        (doc["metadata"]["name"] for doc in inputs.documents),
         play.raw,
         written.groups,
         config.sections,
@@ -223,7 +225,9 @@ def report(
     spelled = rfc1123(wanted) or "fabric"
     inputs = fabric_inputs(var_files, spelled)
     adoption = (
-        _adopt(repo, playbook, source, play, spelled, config, var_files) if playbook else None
+        _adopt(repo, playbook, source, play, spelled, config, var_files, inputs)
+        if playbook
+        else None
     )
 
     # Every part is reported before anything decides the run failed: an unreadable
@@ -293,7 +297,7 @@ def emit(
         )
         raise typer.Exit(2)
     if len(spelled) > LABEL_MAX:
-        # the name is also the value of the label a Fabric selects its inputs by
+        # the name is also the value of the label its inputs carry
         typer.echo(
             f"nothing emitted: {spelled} is {len(spelled)} characters, a label value "
             f"holds {LABEL_MAX} -- pass a shorter --name",
@@ -305,7 +309,7 @@ def emit(
     source = _inventory_source(inventory, config)
     found = read_vars(repo, source, playbook)
     inputs = fabric_inputs(found, spelled)
-    adoption = _adopt(repo, playbook, source, play, spelled, config, found)
+    adoption = _adopt(repo, playbook, source, play, spelled, config, found, inputs)
     said = _emit_notes(repo, adoption)
     if name and spelled != name:
         said.insert(0, f"--name {name} is spelled {spelled}")
@@ -597,7 +601,7 @@ def _name_refused(wanted: str) -> tuple[str, str] | None:
     if not spelled:
         return (wanted, "no name can be spelled from it -- emit refuses it, pass --name")
     if len(spelled) > LABEL_MAX:
-        # the name is also the value of the label a Fabric selects its inputs by
+        # the name is also the value of the label its inputs carry
         why = (
             f"{len(spelled)} characters, and a label value holds {LABEL_MAX} -- "
             "emit refuses it, pass a shorter --name"

@@ -64,7 +64,7 @@ def test_the_fabric_comes_first_named_for_the_directory_with_the_first_play(repo
         "kind": "Fabric",
         "metadata": {"name": "single-dc-l3ls"},
         "spec": {
-            "inputs": {"matchLabels": {"avd.netclab.dev/fabric": "single-dc-l3ls"}},
+            "inputs": ["single-dc-l3ls-fabric"],
             "play": first_play,
             "ansibleCfg": {"defaults": {"inventory": "inventory.yml"}},
             "groups": yaml.safe_load(INVENTORY),

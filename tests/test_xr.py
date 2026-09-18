@@ -260,33 +260,25 @@ def test_the_stream_is_one_document_per_object_in_order():
     assert all(doc["kind"] == FABRIC_INPUT for doc in emitted.documents)
 
 
-def test_a_fabric_carries_its_parts_verbatim_and_selects_its_inputs_by_label():
+def test_a_fabric_carries_its_parts_verbatim_and_lists_its_inputs():
     play = {"name": "Converge", "hosts": "TWODC_5STAGE_CLOS", "gather_facts": False}
     groups = {"all": {"children": {"TWODC_5STAGE_CLOS": {"hosts": {"DC1.POD1.LEAF2A": None}}}}}
     config = {"defaults": {"inventory": "inventory/"}}
 
-    document = fabric("eos-designs-twodc-5stage-clos", play, groups, config)
+    inputs = ("eos-designs-twodc-5stage-clos-fabric", "eos-designs-twodc-5stage-clos-dc1")
+    document = fabric("eos-designs-twodc-5stage-clos", iter(inputs), play, groups, config)
 
     assert document == {
         "apiVersion": API_VERSION,
         "kind": FABRIC,
         "metadata": {"name": "eos-designs-twodc-5stage-clos"},
         "spec": {
-            "inputs": {"matchLabels": {FABRIC_LABEL: "eos-designs-twodc-5stage-clos"}},
+            "inputs": list(inputs),
             "play": play,
             "ansibleCfg": config,
             "groups": groups,
         },
     }
-
-
-def test_the_label_a_fabric_selects_is_the_one_its_inputs_carry():
-    found = VarFiles(files=(one("FABRIC.yml", "FABRIC", {"a": 1}),))
-
-    selector = fabric(NAME, {}, {}, {})["spec"]["inputs"]["matchLabels"]
-    labels = fabric_inputs(found, NAME).documents[0]["metadata"]["labels"]
-
-    assert selector.items() <= labels.items()
 
 
 def test_nothing_read_is_an_empty_stream_and_not_a_failure():

@@ -8,10 +8,11 @@ Names are spelled twice on purpose. `metadata.name` is RFC 1123, because Kuberne
 requires it; `spec.appliesTo` keeps the repository's spelling, because Ansible
 resolves against that.
 
-Every FabricInput carries the label `avd.netclab.dev/fabric`, naming the Fabric it was
-emitted with, and its name begins with that Fabric's -- so two fabrics share a
-namespace without taking each other's inputs. A Fabric picks its inputs by that label,
-through `spec.inputs`; a second Fabric pointed at the same label shares them.
+A Fabric lists its inputs by name, in `spec.inputs`, and is rendered only once every
+one is found: a list says when a fabric is whole, where a selector cannot. Every
+FabricInput also carries the label `avd.netclab.dev/fabric`, naming the Fabric it was
+emitted with, so one labelled for a Fabric and not listed by it can be reported. Its
+name begins with that Fabric's, so two fabrics share a namespace.
 
 A group_vars file beside the inventory and one beside the playbook are different
 precedence levels, so they stay in different objects and never merge here.
@@ -34,7 +35,7 @@ API_VERSION = "avd.netclab.dev/v1alpha1"
 FABRIC = "Fabric"
 FABRIC_INPUT = "FabricInput"
 
-# The label a Fabric selects its FabricInputs by.
+# The label naming the Fabric a FabricInput or ConfigMap was emitted with.
 FABRIC_LABEL = "avd.netclab.dev/fabric"
 # The longest label value Kubernetes accepts; a name may be longer, a label may not.
 LABEL_MAX = 63
@@ -84,6 +85,7 @@ class Emitted:
 
 def fabric(
     name: str,
+    inputs: Iterable[str],
     play: dict,
     groups: dict,
     ansible_cfg: dict,
@@ -93,13 +95,13 @@ def fabric(
 ) -> dict:
     """The Fabric object: one play, the inventory and ansible.cfg, each as written.
 
-    `name` is already a Kubernetes name, and the FabricInputs emitted with it carry it
-    in the label `spec.inputs` selects. `vault_password` is set when ansible.cfg names
+    `name` is already a Kubernetes name, and `inputs` names the FabricInputs emitted
+    with it, which become `spec.inputs`. `vault_password` is set when ansible.cfg names
     a vault password file: the password is never carried, and `spec.vaultPassword`
     names the Secret holding it, in the Fabric's own namespace. `pools` and `files` are
     the entries `pool_objects` and `named_file_objects` make.
     """
-    spec: dict = {"inputs": {"matchLabels": {FABRIC_LABEL: name}}}
+    spec: dict = {"inputs": list(inputs)}
     if vault_password:
         spec["vaultPassword"] = {"secretRef": {"name": vault_secret(name), "key": VAULT_SECRET_KEY}}
     if pools:
