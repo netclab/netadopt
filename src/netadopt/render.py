@@ -98,7 +98,7 @@ def render(
     # Beside the source playbook, so that playbook_dir is the directory it names.
     book = (root / playbook).parent / RENDER_PLAYBOOK
     try:
-        book.write_text(ansible_yaml.dump([_render_play(raw)]), encoding="utf-8")
+        book.write_text(ansible_yaml.dump([render_play(raw)]), encoding="utf-8")
     except OSError as err:
         return Rendered(problem=f"{book} could not be written: {err}")
 
@@ -123,7 +123,8 @@ def _run(
     command = [str(ansible.exe), str(book.relative_to(root))]
     if inventory:
         command += ["-i", inventory]
-    command += ["-e", _extra_vars(out)]
+    # As JSON, because a directory may hold a space and `key=value` may not.
+    command += ["-e", json.dumps(render_extra_vars(out))]
     try:
         return subprocess.run(
             command,
@@ -143,23 +144,20 @@ def _run(
         return f"{RENDER_ROLE} did not finish in {RENDER_TIMEOUT}s"
 
 
-def _extra_vars(out: Path) -> str:
-    """The three values the render sets over the repository's own.
+def render_extra_vars(out: Path) -> dict:
+    """The three values the render sets over the repository's own, `out` taking the output.
 
     An inventory's ansible_connection outranks -c, and extra vars are the one
-    precedence level above inventory vars. As JSON, because a directory may hold a
-    space and `key=value` may not.
+    precedence level above inventory vars. Given last, they outrank other extra vars too.
     """
-    return json.dumps(
-        {"ansible_connection": "local", "ansible_become": False, "structured_dir": str(out)}
-    )
+    return {"ansible_connection": "local", "ansible_become": False, "structured_dir": str(out)}
 
 
-def _render_play(raw: dict) -> dict:
+def render_play(raw: dict) -> dict:
     """The play as written, with every task list replaced by the role that renders.
 
-    `roles:` goes with them: a lab is built from the cabling eos_designs computes, and
-    a deploy task left in the play would reach for a device that does not exist yet.
+    `roles:` goes with them: the structured configuration is what eos_designs computes,
+    and a deploy task left in the play would reach for a device.
     """
     play = {key: value for key, value in raw.items() if key not in (*TASK_KEYS, "roles")}
     play["tasks"] = [{"ansible.builtin.import_role": {"name": RENDER_ROLE}}]

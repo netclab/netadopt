@@ -30,6 +30,8 @@ def test_the_contract_is_these_names():
         "read_inventory",
         "reconstruct",
         "render",
+        "render_extra_vars",
+        "render_play",
         "resolve_ansible",
     ]
 
@@ -64,6 +66,8 @@ def test_constant(name, value):
                 "play: 'int' = 0, inventory: 'str | None' = None) -> 'Rendered'"
             ),
         ),
+        ("render_play", "(raw: 'dict') -> 'dict'"),
+        ("render_extra_vars", "(out: 'Path') -> 'dict'"),
     ],
 )
 def test_function_signature(name, expected):
