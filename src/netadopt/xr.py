@@ -92,6 +92,7 @@ def fabric(
     vault_password: bool = False,
     pools: list[dict] | None = None,
     files: list[dict] | None = None,
+    extra_vars: dict | None = None,
 ) -> dict:
     """The Fabric object: one play, the inventory and ansible.cfg, each as written.
 
@@ -99,7 +100,8 @@ def fabric(
     with it, which become `spec.inputs`. `vault_password` is set when ansible.cfg names
     a vault password file: the password is never carried, and `spec.vaultPassword`
     names the Secret holding it, in the Fabric's own namespace. `pools` and `files` are
-    the entries `pool_objects` and `named_file_objects` make.
+    the entries `pool_objects` and `named_file_objects` make. `extra_vars` is what
+    `ansible-playbook -e` would be given, and becomes `spec.extraVars`.
     """
     spec: dict = {"inputs": list(inputs)}
     if vault_password:
@@ -108,6 +110,8 @@ def fabric(
         spec["pools"] = pools
     if files:
         spec["files"] = files
+    if extra_vars:
+        spec["extraVars"] = extra_vars
     spec |= {"play": play, "ansibleCfg": ansible_cfg, "groups": groups}
     return {"apiVersion": API_VERSION, "kind": FABRIC, "metadata": {"name": name}, "spec": spec}
 

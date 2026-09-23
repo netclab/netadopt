@@ -38,6 +38,7 @@ Config      ansible.cfg
 Inventory   named by ansible.cfg   8 hosts, 8 groups
 Variables   8 files                group_vars 8, host_vars 0
 Playbook    build.yml              1 play
+Renders     not measured           netadopt avd lab single-dc-l3ls --playbook build.yml
 
 #   Play                                     Hosts    Roles
 ─────────────────────────────────────────────────────────────────────────────────────
@@ -99,6 +100,15 @@ spec:
 
 Group and host names stay the repository's; only `metadata.name` is spelled for
 Kubernetes. The YAML goes to stdout and everything said about it to stderr.
+
+Extra vars are given as to `ansible-playbook`, and the `Fabric` carries them as
+`spec.extraVars`:
+
+```
+$ netadopt avd emit single-dc-l3ls --playbook build.yml -e @lab-vars.yml > single-dc-l3ls.yaml
+```
+
+Only the `@file` form is read for now. Given twice, the later file wins a key.
 
 Apply them server-side:
 
@@ -167,6 +177,32 @@ defaults hold otherwise.
 Node names are the repository's hostnames, lowercased for Kubernetes. A host no name
 can be spelled from is left out with its cables and said on stderr; two hosts that
 would share a name stop the lab rather than one of them being guessed at.
+
+To push the fabric's configuration to the lab rather than to the real devices, `lab`
+also writes the extra vars that point each host at its node:
+
+```
+$ netadopt avd lab single-dc-l3ls --playbook build.yml --namespace dc1 --extra-vars-out lab-vars.yml > values.yaml
+$ helm install lab netclab/netclab --namespace dc1 --values values.yaml
+$ netadopt avd emit single-dc-l3ls --playbook build.yml -e @lab-vars.yml > single-dc-l3ls.yaml
+```
+
+```yaml
+lab_services:
+  dc1-leaf1a: dc1-leaf1a.dc1.svc
+  # ...
+ansible_host: '{{ lab_services[inventory_hostname] | mandatory(inventory_hostname ~ '' has no node in the lab'') }}'
+management_eapi:
+  enabled: true
+  vrfs:
+  - name: default
+    enabled: true
+```
+
+The namespace is the one the chart is installed into, and `--extra-vars-out` refuses to
+run without it. A host with no node in the lab stops with its name, never reaching an
+address that is not its own. eAPI moves to the default VRF, because a cEOS pod has no
+management interface for the design's own.
 
 Exit codes are `report`'s: `0`, or `2` when there is no lab, or `1` without the `avd`
 extra.

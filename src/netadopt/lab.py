@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
 
@@ -62,6 +62,7 @@ class Lab:
     values: dict | None = None
     notes: tuple[str, ...] = ()
     problem: str | None = None
+    hosts: Mapping[str, str] = field(default_factory=dict)  # fabric host -> its node
 
 
 def netclab_values(
@@ -184,7 +185,30 @@ def netclab_values(
         ]
         nodes.append(node)
 
-    return Lab(values={"topology": {"networks": networks, "nodes": nodes}}, notes=tuple(notes))
+    return Lab(
+        values={"topology": {"networks": networks, "nodes": nodes}},
+        notes=tuple(notes),
+        hosts={host: spelled[host] for host in rendered if host in spelled},
+    )
+
+
+def lab_extra_vars(hosts: Mapping[str, str], namespace: str) -> dict:
+    """What `ansible-playbook -e` needs to reach the lab's devices instead of the real ones.
+
+    The address is looked up per host, because a node's name is the host's spelled as
+    a Service's, and a host left out of the lab stops with its name rather than being
+    pushed to an address that is someone else's. eAPI moves to the default VRF: a cEOS
+    pod has no management interface for the design's own VRF.
+    """
+    return {
+        "lab_services": {host: f"{node}.{namespace}.svc" for host, node in sorted(hosts.items())},
+        "ansible_host": (
+            "{{ lab_services[inventory_hostname]"
+            " | mandatory(inventory_hostname ~ ' has no node in the lab') }}"
+        ),
+        # `enabled` is written, because AVD reads a block without it as disabled.
+        "management_eapi": {"enabled": True, "vrfs": [{"name": "default", "enabled": True}]},
+    }
 
 
 def values_yaml(values: dict) -> str:

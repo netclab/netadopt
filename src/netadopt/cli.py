@@ -15,13 +15,14 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 from rich import box
 from rich.console import Console
 from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-from netadopt import AVD_TESTED
+from netadopt import AVD_TESTED, ansible_yaml
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
 from netadopt.files import Named, find_named_files
@@ -33,6 +34,7 @@ from netadopt.lab import (
     LINUX,
     NETCLAB,
     Ceos,
+    lab_extra_vars,
     netclab_values,
     values_yaml,
 )
@@ -103,6 +105,11 @@ PlayOption = Annotated[int, typer.Option(metavar="N", help="play to carry, by it
 NameOption = Annotated[
     str | None, typer.Option(help="the Fabric's name; default the repository directory's")
 ]
+# Ansible's own -e, in its @file form only for now; repeated, the later file wins a key.
+ExtraVarsOption = Annotated[
+    list[str] | None,
+    typer.Option("--extra-vars", "-e", metavar="@FILE", help="extra vars, as -e @file"),
+]
 
 # What a lab is written for. netclab-chart is built; containerlab is the second emitter
 # and is not offered before it exists.
@@ -115,6 +122,14 @@ ConnectedOption = Annotated[
 CeosImageOption = Annotated[str | None, typer.Option(help="the image every cEOS node runs")]
 CeosMemoryOption = Annotated[str | None, typer.Option(help="the memory every cEOS node asks for")]
 CeosCpuOption = Annotated[str | None, typer.Option(help="the CPU every cEOS node asks for")]
+# The namespace the chart is installed into: a node's Service is only reachable by it.
+NamespaceOption = Annotated[
+    str | None, typer.Option(help="the namespace the lab is installed into")
+]
+ExtraVarsOutOption = Annotated[
+    Path | None,
+    typer.Option(metavar="FILE", help="write the extra vars that reach the lab, for emit -e"),
+]
 
 
 @dataclass(frozen=True)
@@ -148,6 +163,7 @@ def _adopt(
     config: AnsibleCfg,
     found: VarFiles,
     inputs: Emitted,
+    extra_vars: dict | None = None,
 ) -> Adoption:
     """The Fabric named `name`, carrying play `index`, and the ConfigMaps of its files."""
     if playbook is None:
@@ -179,6 +195,7 @@ def _adopt(
         vault_password=bool(vault_file),
         pools=pool_entries,
         files=file_entries,
+        extra_vars=extra_vars,
     )
     config_maps = tuple(doc for doc in (pools_map, files_map) if doc)
     return Adoption(
@@ -282,6 +299,7 @@ def emit(
     inventory: InventoryOption = None,
     play: PlayOption = 0,
     name: NameOption = None,
+    extra_vars: ExtraVarsOption = None,
 ) -> None:
     """Write the Fabric and FabricInput objects of the repository, as YAML.
 
@@ -289,6 +307,11 @@ def emit(
     `kubectl apply --server-side -f -` whether or not there was something to say.
     Server-side: a plain apply drops every explicit null in a map.
     """
+    given, problem = _extra_vars(extra_vars or [])
+    if problem:
+        typer.echo(f"nothing emitted: {problem}", err=True)
+        raise typer.Exit(2)
+
     wanted = name or repo.resolve().name
     spelled = rfc1123(wanted)
     if not spelled:
@@ -309,7 +332,7 @@ def emit(
     source = _inventory_source(inventory, config)
     found = read_vars(repo, source, playbook)
     inputs = fabric_inputs(found, spelled)
-    adoption = _adopt(repo, playbook, source, play, spelled, config, found, inputs)
+    adoption = _adopt(repo, playbook, source, play, spelled, config, found, inputs, given)
     said = _emit_notes(repo, adoption)
     if name and spelled != name:
         said.insert(0, f"--name {name} is spelled {spelled}")
@@ -363,6 +386,8 @@ def lab(
     ceos_image: CeosImageOption = None,
     ceos_memory: CeosMemoryOption = None,
     ceos_cpu: CeosCpuOption = None,
+    namespace: NamespaceOption = None,
+    extra_vars_out: ExtraVarsOutOption = None,
 ) -> None:
     """Write the lab topology of the repository's fabric: cabled nodes, no configuration.
 
@@ -371,7 +396,13 @@ def lab(
 
     AVD renders the cabling, on a copy of the repository, with the collections netadopt
     pins -- fetched into its own cache the first time and never again.
+
+    With --extra-vars-out, the file `emit -e` reads to push to the lab's devices.
     """
+    if extra_vars_out is not None and namespace is None:
+        # without it, every address would name a Service in no namespace the lab is in
+        typer.echo("no lab: --extra-vars-out needs --namespace", err=True)
+        raise typer.Exit(2)
     if for_ not in LAB_TARGETS:
         typer.echo(f"no lab: --for {for_} is not built -- {', '.join(LAB_TARGETS)}", err=True)
         raise typer.Exit(2)
@@ -426,12 +457,42 @@ def lab(
     if built.problem:
         typer.echo(f"no lab: {built.problem}", err=True)
         raise typer.Exit(2)
+    if extra_vars_out is not None and namespace is not None:
+        text = ansible_yaml.dump(lab_extra_vars(built.hosts, namespace))
+        try:
+            extra_vars_out.write_text(text, encoding="utf-8")
+        except OSError as err:
+            typer.echo(f"no lab: {extra_vars_out} could not be written: {err}", err=True)
+            raise typer.Exit(2) from None
+        typer.echo(
+            f"extra vars for {_count(len(built.hosts), 'host')} in {extra_vars_out}", err=True
+        )
 
     # What the values hold, which is not what the render wrote: a peer outside the
     # fabric is a node too, and AVD rendered no structured configuration for it.
     typer.echo(_lab_summary(built.values), err=True)
     typer.echo(values_yaml(built.values), nl=False)
     raise typer.Exit(0)
+
+
+def _extra_vars(given: list[str]) -> tuple[dict, str | None]:
+    """The `-e @file` files merged in order, a later file's key replacing an earlier one's.
+
+    Relative to the working directory, as Ansible reads them; `!vault` stays ciphertext.
+    """
+    merged: dict = {}
+    for option in given:
+        if not option.startswith("@"):
+            return {}, f"-e {option}: only the @file form is read"
+        path = Path(option[1:])
+        try:
+            loaded = ansible_yaml.load(path.read_text(encoding="utf-8"), path)
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as err:
+            return {}, f"-e {option}: {err}"
+        if not isinstance(loaded, dict):
+            return {}, f"-e {option}: holds {type(loaded).__name__}, not a mapping"
+        merged |= loaded
+    return merged, None
 
 
 def _lab_summary(values: dict) -> str:

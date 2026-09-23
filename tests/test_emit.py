@@ -403,3 +403,42 @@ def test_a_code_directory_ansible_cfg_names_is_not_carried_and_fails_the_run(rep
         "not carried: plugins/vars, named by vars_plugins in ansible.cfg -- "
         "missing from the rebuilt repository"
     ) in result.stderr
+
+
+def test_extra_vars_files_become_the_fabrics_extra_vars_the_later_winning_a_key(repo, tmp_path):
+    (tmp_path / "lab.yml").write_text("ansible_host: lab\nmanagement_eapi: {enabled: true}\n")
+    (tmp_path / "mine.yml").write_text("ansible_host: mine\n")
+
+    result, documents = emit(
+        repo,
+        "--playbook",
+        "build.yml",
+        "-e",
+        f"@{tmp_path / 'lab.yml'}",
+        "-e",
+        f"@{tmp_path / 'mine.yml'}",
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert documents[0]["spec"]["extraVars"] == {
+        "ansible_host": "mine",
+        "management_eapi": {"enabled": True},
+    }
+
+
+def test_extra_vars_in_any_form_but_a_file_emit_nothing(repo):
+    result, documents = emit(repo, "--playbook", "build.yml", "-e", "ansible_host=lab")
+
+    assert result.exit_code == 2
+    assert documents == []
+    assert "nothing emitted: -e ansible_host=lab: only the @file form is read" in result.stderr
+
+
+def test_an_extra_vars_file_that_is_no_mapping_emits_nothing(repo, tmp_path):
+    (tmp_path / "list.yml").write_text("- ansible_host\n")
+
+    result, documents = emit(repo, "--playbook", "build.yml", "-e", f"@{tmp_path / 'list.yml'}")
+
+    assert result.exit_code == 2
+    assert documents == []
+    assert "holds list, not a mapping" in result.stderr

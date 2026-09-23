@@ -270,3 +270,34 @@ def test_no_ansible_is_an_incomplete_install_of_netadopt(repo, collections, tmp_
 
     assert result.exit_code == 1
     assert 'install as: uvx "netadopt[avd]"' in result.stderr
+
+
+def test_the_extra_vars_name_each_rendered_hosts_service_and_no_peers(
+    repo, ansible, collections, tmp_path
+):
+    out = tmp_path / "lab-vars.yml"
+
+    result = lab(
+        repo, "--playbook", "build.yml", "--namespace", "dc1", "--extra-vars-out", str(out)
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert "extra vars for 2 hosts in" in result.stderr
+    written = yaml.safe_load(out.read_text())
+    assert written["lab_services"] == {
+        "dc1-leaf1a": "dc1-leaf1a.dc1.svc",
+        "dc1-spine1": "dc1-spine1.dc1.svc",
+    }
+    assert "lab_services[inventory_hostname]" in written["ansible_host"]
+    assert written["management_eapi"] == {
+        "enabled": True,
+        "vrfs": [{"name": "default", "enabled": True}],
+    }
+
+
+def test_extra_vars_without_a_namespace_render_nothing(repo, ansible, collections, tmp_path):
+    result = lab(repo, "--playbook", "build.yml", "--extra-vars-out", str(tmp_path / "x.yml"))
+
+    assert result.exit_code == 2
+    assert "no lab: --extra-vars-out needs --namespace" in result.stderr
+    assert not (ansible / "call.json").exists()
