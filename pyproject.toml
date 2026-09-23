@@ -1,6 +1,6 @@
 [project]
 name = "netadopt"
-version = "0.5.0"
+version = "0.6.0"
 description = "Read a network-automation repository and adopt its model into Kubernetes"
 readme = "README.md"
 license = "Apache-2.0"
