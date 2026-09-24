@@ -268,7 +268,7 @@ def report(
     if adoption is not None:
         _print_section(console, "Carried", "green", _carried(adoption, inputs))
         _print_section(
-            console, "Not carried", "red", _not_carried(repo, adoption, var_files, inputs, refused)
+            console, "Not carried", "red", _not_carried(repo, adoption, var_files, refused)
         )
         if adoption.vault_file:
             # on a line of its own, never wrapped, so that it can be copied
@@ -284,7 +284,6 @@ def report(
         or not adoption.documents
         or adoption.uncarried_code
         or var_files.problems
-        or inputs.problems
         or refused is not None  # emit would emit nothing under this name
     )
     if unreadable or incomplete:
@@ -356,7 +355,7 @@ def emit(
         typer.echo(to_yaml(documents), nl=False)
 
     unread = [f"{file.path}: not emitted -- {file.problem}" for file in found.problems]
-    for line in (*said, *unread, *inputs.notes, *inputs.problems):
+    for line in (*said, *unread, *inputs.notes):
         typer.echo(line, err=True)
     plain = plain_passwords(documents)
     if plain:
@@ -370,7 +369,7 @@ def emit(
     if not inputs.documents:
         typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
-    if not adoption.documents or adoption.uncarried_code or found.problems or inputs.problems:
+    if not adoption.documents or adoption.uncarried_code or found.problems:
         raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
 
@@ -734,7 +733,6 @@ def _not_carried(
     repo: Path,
     adoption: Adoption,
     found: VarFiles,
-    inputs: Emitted,
     refused: tuple[str, str] | None = None,
 ) -> list[tuple[str, ...]]:
     rows: list[tuple[str, ...]] = []
@@ -762,7 +760,7 @@ def _not_carried(
         rows.append((_relative(file.path, repo), file.problem or ""))
     for note in adoption.pools.notes:
         rows.append(("pool file", note))
-    for note in (*inputs.problems, *adoption.named.notes):
+    for note in adoption.named.notes:
         rows.append(_split(note))
     return rows
 

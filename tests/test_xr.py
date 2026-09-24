@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -116,23 +117,45 @@ def test_rfc_1123_survives_dots_capitals_and_edges():
     assert rfc1123("A" * 300) == "a" * 300
 
 
-def test_a_name_too_long_for_kubernetes_is_refused_and_not_cut():
+def test_a_name_that_fits_is_kept_whole():
+    edge = "G" * (NAME_MAX - len("lab-"))
+    found = VarFiles(files=(one(f"{edge}.yml", edge, {"a": 1}),))
+
+    document = fabric_inputs(found, NAME).documents[0]
+
+    assert document["metadata"]["name"] == f"lab-{edge.lower()}"
+
+
+def test_a_name_too_long_for_crossplane_ends_in_a_hash_of_the_whole():
     long = "G" * (NAME_MAX - len("lab-") + 1)
+    found = VarFiles(files=(one(f"{long}.yml", long, {"a": 1}),))
+
+    first = fabric_inputs(found, NAME).documents[0]
+    again = fabric_inputs(found, NAME).documents[0]
+
+    name = first["metadata"]["name"]
+    assert len(name) == NAME_MAX
+    assert re.fullmatch(r"lab-g+-[0-9a-f]{8}", name)
+    assert again["metadata"]["name"] == name
+    assert first["spec"]["appliesTo"] == {"group": long}
+
+
+def test_two_long_names_with_one_start_stay_two():
+    start = "G" * NAME_MAX
     found = VarFiles(
         files=(
-            one(f"{long}.yml", long, {"a": 1}),
-            one("FABRIC.yml", "FABRIC", {"b": 2}),
+            one("a.yml", f"{start}A", {"a": 1}),
+            one("b.yml", f"{start}B", {"b": 2}),
         )
     )
 
-    emitted = fabric_inputs(found, NAME)
+    names = [doc["metadata"]["name"] for doc in fabric_inputs(found, NAME).documents]
 
-    assert [doc["metadata"]["name"] for doc in emitted.documents] == ["lab-fabric"]
-    assert len(emitted.problems) == 1
-    assert long in emitted.problems[0] and str(NAME_MAX) in emitted.problems[0]
+    assert len(set(names)) == 2
+    assert all(len(name) == NAME_MAX for name in names)
 
 
-def test_a_suffix_that_makes_a_name_too_long_is_refused_too():
+def test_a_suffix_that_makes_a_name_too_long_is_shortened_too():
     edge = "g" * (NAME_MAX - len("lab-"))
     found = VarFiles(
         files=(
@@ -141,10 +164,10 @@ def test_a_suffix_that_makes_a_name_too_long_is_refused_too():
         )
     )
 
-    emitted = fabric_inputs(found, NAME)
+    names = [doc["metadata"]["name"] for doc in fabric_inputs(found, NAME).documents]
 
-    assert [len(doc["metadata"]["name"]) for doc in emitted.documents] == [NAME_MAX]
-    assert len(emitted.problems) == 1
+    assert names[0] == f"lab-{edge}"
+    assert len(names[1]) == NAME_MAX and names[1] != names[0]
 
 
 def test_a_file_that_did_not_read_is_not_emitted():

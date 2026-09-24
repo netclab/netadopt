@@ -346,15 +346,21 @@ def test_a_config_map_over_a_mebibyte_emits_nothing(repo):
     assert "single-dc-l3ls-files" in result.stderr
 
 
-def test_an_input_whose_name_is_too_long_is_refused_and_fails_the_run(repo):
-    group = "G" * 240  # single-dc-l3ls- in front makes 255
+def test_an_input_whose_name_is_too_long_is_emitted_under_a_shorter_one(repo):
+    group = "G" * 60  # single-dc-l3ls- in front makes 75
     (repo / "group_vars" / f"{group}.yml").write_text("a: 1\n")
 
     result, documents = emit(repo, "--playbook", "build.yml")
 
-    assert result.exit_code == 2
-    assert group.lower() not in [doc["metadata"]["name"] for doc in documents]
-    assert "253" in result.stderr
+    assert result.exit_code == 0
+    fabric = next(doc for doc in documents if doc["kind"] == "Fabric")
+    shortened = next(
+        doc
+        for doc in documents
+        if doc["kind"] == "FabricInput" and doc["spec"]["appliesTo"] == {"group": group}
+    )
+    assert len(shortened["metadata"]["name"]) == 63
+    assert shortened["metadata"]["name"] in fabric["spec"]["inputs"]
 
 
 def test_a_name_too_long_for_a_label_emits_nothing(repo):

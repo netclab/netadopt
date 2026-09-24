@@ -4,9 +4,9 @@ One FabricInput per scope, not per file: a `group_vars/FABRIC/` directory is sev
 and one namespace, so its keys arrive in one `design`. `design` is the repository's
 own content -- transport keys included, nothing lifted out, nothing renamed.
 
-Names are spelled twice on purpose. `metadata.name` is RFC 1123, because Kubernetes
-requires it; `spec.appliesTo` keeps the repository's spelling, because Ansible
-resolves against that.
+Names are spelled twice on purpose. `metadata.name` is RFC 1123 and at most 63
+characters, because Kubernetes and Crossplane require it; `spec.appliesTo` keeps the
+repository's spelling, because Ansible resolves against that.
 
 A Fabric lists its inputs by name, in `spec.inputs`, and is rendered only once every
 one is found: a list says when a fabric is whole, where a selector cannot. Every
@@ -21,6 +21,7 @@ precedence levels, so they stay in different objects and never merge here.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -40,8 +41,11 @@ FABRIC_LABEL = "avd.netclab.dev/fabric"
 # The longest label value Kubernetes accepts; a name may be longer, a label may not.
 LABEL_MAX = 63
 
-# The longest object name Kubernetes accepts.
-NAME_MAX = 253
+# The longest name Crossplane gives a composite resource: the name is a label value on
+# everything it composes.
+NAME_MAX = 63
+# Hex characters of the hash that ends a shortened name.
+_HASH_LEN = 8
 
 # The key of the vault password in its Secret.
 VAULT_SECRET_KEY = "password"
@@ -80,7 +84,6 @@ _NOT_KEY = re.compile(r"[^-._a-zA-Z0-9]+")
 class Emitted:
     documents: tuple[dict, ...] = ()
     notes: tuple[str, ...] = field(default_factory=tuple)
-    problems: tuple[str, ...] = ()  # objects refused, which fail the run
 
 
 def fabric(
@@ -205,7 +208,6 @@ def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
     """
     designs: dict[tuple[str, str, str], dict] = {}
     notes: list[str] = []
-    problems: list[str] = []
 
     for file in found.files:
         if file.data is None:  # a file that did not read is in found.problems
@@ -229,11 +231,7 @@ def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
             # name -- FABRIC and fabric, DC1.POD1 and DC1-POD1.
             notes.append(f"{scope}: {wanted} is taken, so this object becomes {name}")
         taken.add(name)
-        if len(name) > NAME_MAX:
-            problems.append(
-                f"{scope}: not emitted -- {name} is {len(name)} characters, a name holds {NAME_MAX}"
-            )
-            continue
+        name = fit(name)
 
         applies = {"group": scope} if vars_dir == GROUP_VARS else {"hosts": [scope]}
         documents.append(
@@ -249,7 +247,7 @@ def fabric_inputs(found: VarFiles, fabric_name: str) -> Emitted:
                 "spec": {"appliesTo": applies, "beside": root, "design": design},
             }
         )
-    return Emitted(documents=tuple(documents), notes=tuple(notes), problems=tuple(problems))
+    return Emitted(documents=tuple(documents), notes=tuple(notes))
 
 
 class _Dumper(yaml.SafeDumper):
@@ -275,10 +273,22 @@ def to_yaml(documents: tuple[dict, ...]) -> str:
 def rfc1123(name: str) -> str:
     """A Kubernetes object name from a group or host name of any spelling.
 
-    Never shortened: a cut name can equal another, so the length is checked where the
-    name is used, and a name too long is refused there.
+    Never shortened here: a cut name can equal another, so `fit` shortens it where the
+    name is used, with a hash of the whole.
     """
     return _NOT_NAME.sub("-", name.lower()).strip("-")
+
+
+def fit(name: str) -> str:
+    """`name`, or, when longer than a composite resource's name may be, its start and a hash.
+
+    The hash is of the whole name, so two names with one start stay two names, and a name
+    is shortened the same way on every run.
+    """
+    if len(name) <= NAME_MAX:
+        return name
+    digest = hashlib.sha256(name.encode()).hexdigest()[:_HASH_LEN]
+    return f"{name[: NAME_MAX - _HASH_LEN - 1].rstrip('-')}-{digest}"
 
 
 def _free(name: str, root: str, taken: set[str]) -> str:
