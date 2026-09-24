@@ -27,12 +27,14 @@ def test_the_contract_is_these_names():
         "Reconstructed",
         "Rendered",
         "ensure_collections",
+        "fit",
         "read_inventory",
         "reconstruct",
         "render",
         "render_extra_vars",
         "render_play",
         "resolve_ansible",
+        "rfc1123",
     ]
 
 
@@ -67,6 +69,8 @@ def test_constant(name, value):
             ),
         ),
         ("render_play", "(raw: 'dict') -> 'dict'"),
+        ("rfc1123", "(name: 'str') -> 'str'"),
+        ("fit", "(name: 'str') -> 'str'"),
         ("render_extra_vars", "(out: 'Path') -> 'dict'"),
     ],
 )

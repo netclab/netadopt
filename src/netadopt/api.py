@@ -2,8 +2,8 @@
 
 function-avd reconstructs a repository from a Fabric and renders it with AVD's own
 role, from the play and the extra vars `lab` renders with, so the two cannot drift
-apart; its image installs the collections, and its tests read the inventory. Each name
-is pinned by tests/test_api.py.
+apart; it names the objects it composes as `emit` names its own; its image installs the
+collections, and its tests read the inventory. Each name is pinned by tests/test_api.py.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from netadopt.galaxy import Collections, ensure_collections
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.reconstruct import Reconstructed, reconstruct
 from netadopt.render import Rendered, render, render_extra_vars, render_play
-from netadopt.xr import API_VERSION, FABRIC_LABEL
+from netadopt.xr import API_VERSION, FABRIC_LABEL, fit, rfc1123
 
 __all__ = [
     "API_VERSION",
@@ -26,10 +26,12 @@ __all__ = [
     "Reconstructed",
     "Rendered",
     "ensure_collections",
+    "fit",
     "read_inventory",
     "reconstruct",
     "render",
     "render_extra_vars",
     "render_play",
     "resolve_ansible",
+    "rfc1123",
 ]
