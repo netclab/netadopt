@@ -4,7 +4,7 @@ Reads a network-automation repository, says what is in it, and writes the
 repository's model as Kubernetes resources. It reads *repositories*, never devices.
 
 Arista AVD first: netadopt uses AVD's own data model - no new schema, no translation.
-The objects carry the repository's inventory, play and vars exactly as written.
+The resources carry the repository's inventory, play and vars exactly as written.
 
 ## Installing
 
@@ -27,7 +27,9 @@ already installed elsewhere on the machine is not used.
 
 ## Reading an AVD repository
 
-Run on AVD's `single-dc-l3ls` example:
+The examples here are AVD's own `single-dc-l3ls`, because anyone can clone it; the
+same commands run on any AVD repository, within the
+[Limits](https://github.com/netclab/netadopt#limits):
 
 ```
 $ netadopt avd report single-dc-l3ls --playbook build.yml
@@ -225,10 +227,16 @@ None of them connects to a device.
 ## Tested on AVD's own repositories
 
 Each release is tested on the examples and test scenarios that ship with AVD, at the
-version shown by `netadopt --version`. Every one that can be carried is emitted, rebuilt
-from the objects, and resolved by Ansible on both sides, and every host must end up
-with the same variables. Every one that renders is also built into a lab, where each
-cable AVD wrote has to reach the topology or be named as left out.
+version shown by `netadopt --version`, among them:
+
+- `eos_designs-twodc-5stage-clos`: three plays, a node-ID pool, Jinja templates of its own
+- `cv-pathfinder`: a vaulted password
+- the unit-test scenarios, with hundreds of hosts
+
+Every one that can be carried is emitted, rebuilt from the resources, and resolved by
+Ansible on both sides, and every host must end up with the same variables. Every one
+that renders is also built into a lab, where each cable AVD wrote has to reach the
+topology or be named as left out.
 
 ## Limits
 
