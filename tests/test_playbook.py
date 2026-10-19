@@ -16,6 +16,7 @@ from netadopt.playbook import (
     IMPORT_ROLE,
     INCLUDE_ROLE,
     ROLES_KEYWORD,
+    beyond_role,
     find_playbooks,
     read_playbook,
 )
@@ -242,3 +243,75 @@ def test_candidates_are_the_files_that_read_as_playbooks(repo):
 
     assert [pb.path.name for pb in candidates] == ["build.yml", "deploy.yaml"]
     assert [len(pb.plays) for pb in candidates] == [1, 2]
+
+
+ROLE = "arista.avd.eos_designs"
+DESIGNS = {"ansible.builtin.import_role": {"name": ROLE}}
+
+
+@pytest.mark.parametrize(
+    ("play", "beyond"),
+    [
+        ({"hosts": "FABRIC", "tasks": [DESIGNS]}, ()),
+        ({"hosts": "FABRIC", "roles": [ROLE]}, ()),
+        (
+            {"hosts": "FABRIC", "tasks": [DESIGNS, {"name": "Report", "debug": {}}]},
+            (),
+        ),
+        (
+            {
+                "hosts": "FABRIC",
+                "tasks": [
+                    {"name": "Import global vars", "include_vars": "global.yml"},
+                    DESIGNS,
+                ],
+            },
+            ('task "Import global vars"',),
+        ),
+        (
+            {
+                "hosts": "FABRIC",
+                "pre_tasks": [{"set_fact": {"x": 1}}],
+                "roles": [{"role": "site_vars"}, ROLE],
+                "tasks": [{"name": "After", "debug": {}}],
+            },
+            ('task "set_fact"', "role site_vars"),
+        ),
+        (
+            {
+                "hosts": "FABRIC",
+                "tasks": [
+                    {"import_role": {"name": "arista.avd.eos_snapshot"}},
+                    {"name": "Display", "debug": {}},
+                    DESIGNS,
+                ],
+            },
+            ('task "Display"',),
+        ),
+        (
+            {"hosts": "FABRIC", "tasks": [{"block": [{"name": "In a block"}]}, DESIGNS]},
+            ('task "In a block"',),
+        ),
+        (
+            {"hosts": "{{ target }}", "vars_files": ["global.yml"], "tasks": [DESIGNS]},
+            ("hosts '{{ target }}'", "vars_files"),
+        ),
+        (
+            {"hosts": "localhost", "tasks": [{"name": "Generate", "copy": {}}]},
+            ("no eos_designs",),
+        ),
+    ],
+    ids=[
+        "the-role-alone",
+        "the-role-by-the-roles-keyword",
+        "a-task-after-the-role",
+        "a-task-before-the-role",
+        "pre-tasks-and-roles-run-before-tasks",
+        "an-avd-role-before-is-not-named",
+        "a-task-in-a-block",
+        "a-hosts-template-and-vars-files",
+        "no-role",
+    ],
+)
+def test_what_runs_beside_the_role_is_named_up_to_the_role(play, beyond):
+    assert beyond_role(play, ROLE) == beyond

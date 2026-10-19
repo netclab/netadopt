@@ -38,7 +38,14 @@ from netadopt.lab import (
     netclab_values,
     values_yaml,
 )
-from netadopt.playbook import IMPORT_ROLE, Play, Playbook, find_playbooks, read_playbook
+from netadopt.playbook import (
+    IMPORT_ROLE,
+    Play,
+    Playbook,
+    beyond_role,
+    find_playbooks,
+    read_playbook,
+)
 from netadopt.pools import Pools, find_pools
 from netadopt.render import RENDER_ROLE, STDOUT_CALLBACK, render
 from netadopt.repocode import Code, code_directories, find_code
@@ -285,6 +292,7 @@ def report(
         or adoption.uncarried_code
         or var_files.problems
         or refused is not None  # emit would emit nothing under this name
+        or _beyond(adoption)  # the render leaves part of the play out
     )
     if unreadable or incomplete:
         raise typer.Exit(2)
@@ -568,6 +576,13 @@ def _no_role(play: Play) -> bool:
 NO_ROLE = "pulls in no role"
 
 
+def _beyond(adoption: Adoption | None) -> tuple[str, ...]:
+    """What the carried play holds that the render, running its one role, leaves out."""
+    if adoption is None or adoption.play is None:
+        return ()
+    return beyond_role(adoption.play.raw, RENDER_ROLE)
+
+
 # The report. Each part of the repository is a row of plain strings; rich lays them out.
 
 
@@ -748,6 +763,10 @@ def _not_carried(
     for other in adoption.other_plays:
         what = NO_ROLE if _no_role(other) else f"a separate run: --play {other.index} --name NAME"
         rows.append((_label(other), what))
+
+    if beyond := _beyond(adoption):
+        role = RENDER_ROLE.rsplit(".", 1)[-1]
+        rows.append((f"play [{adoption.play.index}]", f"more than {role}: {', '.join(beyond)}"))
 
     if adoption.vault_file:
         rows.append((adoption.vault_file, "the vault password; create its Secret:"))

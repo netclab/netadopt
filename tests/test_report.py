@@ -286,6 +286,57 @@ def test_a_stdout_callback_other_than_the_default_is_a_warning_and_fails_nothing
     assert result.exit_code == 0, result.output
 
 
+@pytest.mark.parametrize(
+    ("task_at", "row"),
+    [
+        (0, 'play [0] more than eos_designs: task "Import global vars"'),
+        (1, None),
+    ],
+    ids=["before-the-role", "after-the-role"],
+)
+def test_a_task_before_eos_designs_is_not_carried_and_one_after_it_is_not_named(
+    repo, ansible, task_at, row
+):
+    tasks = [
+        "    - ansible.builtin.import_role:\n        name: arista.avd.eos_designs\n",
+    ]
+    tasks.insert(
+        task_at, "    - name: Import global vars\n      ansible.builtin.include_vars: global.yml\n"
+    )
+    write(repo, {"build.yml": "- hosts: FABRIC\n  tasks:\n" + "".join(tasks)})
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    rows = [line for line in section(result.output, "Not carried") if line.startswith("play [0]")]
+    assert rows == ([row] if row else [])
+    assert result.exit_code == (2 if row else 0), result.output
+
+
+def test_a_play_pulling_in_no_eos_designs_is_not_carried(repo, ansible):
+    write(
+        repo,
+        {
+            "build.yml": """
+            - hosts: localhost
+              tasks:
+                - name: Generate host_vars
+                  ansible.builtin.copy: {dest: host_vars/x.yml, content: ""}
+            - hosts: FABRIC
+              tasks:
+                - ansible.builtin.import_role:
+                    name: arista.avd.eos_designs
+            """
+        },
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert "play [0] more than eos_designs: no eos_designs" in section(result.output, "Not carried")
+    assert result.exit_code == 2
+
+
 def test_a_part_of_the_model_not_carried_fails_the_report(repo, ansible):
     write(repo, {"group_vars/FABRIC.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n"})
 

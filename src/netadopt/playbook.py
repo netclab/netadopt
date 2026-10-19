@@ -119,25 +119,15 @@ def _play(index: int, entry: dict) -> Play:
     # parameters -- and those parameters outrank host vars, which is exactly why this
     # is not interchangeable with an import_role task.
     for item in _as_list(entry.get("roles")):
-        if isinstance(item, str):
-            roles.append(RoleRef(item, ROLES_KEYWORD))
-        elif isinstance(item, dict):
-            named = item.get("role") or item.get("name")
-            if named:
-                roles.append(RoleRef(str(named), ROLES_KEYWORD))
+        named = _keyword_role(item)
+        if named:
+            roles.append(RoleRef(named, ROLES_KEYWORD))
 
     tasks = [task for key in TASK_KEYS for task in _as_list(entry.get(key))]
     task_count = 0
     for task in _flatten(tasks):
         task_count += 1
-        for how in (IMPORT_ROLE, INCLUDE_ROLE):
-            # Both spellings: the short name and the fully qualified one.
-            for key in (how, f"ansible.builtin.{how}"):
-                value = task.get(key)
-                if isinstance(value, dict) and value.get("name"):
-                    roles.append(RoleRef(str(value["name"]), how))
-                elif isinstance(value, str):  # free-form: `import_role: name=x`
-                    roles.append(RoleRef(value, how))
+        roles.extend(_task_roles(task))
 
     play_vars = entry.get("vars")
     var_names = tuple(play_vars) if isinstance(play_vars, dict) else ()
@@ -151,6 +141,63 @@ def _play(index: int, entry: dict) -> Play:
         var_names=var_names,
         raw=entry,
     )
+
+
+def beyond_role(raw: dict, role: str) -> tuple[str, ...]:
+    """What in the play a render running `role` alone would leave out."""
+    found: list[str] = []
+    hosts = raw.get("hosts")
+    if "{{" in str(hosts):
+        found.append(f"hosts '{hosts}'")
+    if raw.get("vars_files"):
+        found.append("vars_files")
+
+    # Ansible's order: pre_tasks, then the roles keyword, then tasks.
+    steps = [_step(task) for task in _flatten(_as_list(raw.get("pre_tasks")))]
+    keyword = [_keyword_role(item) for item in _as_list(raw.get("roles"))]
+    steps += [f"role {named}" for named in keyword if named]
+    steps += [_step(task) for task in _flatten(_as_list(raw.get("tasks")))]
+    if f"role {role}" not in steps:
+        return (*found, f"no {role.rsplit('.', 1)[-1]}")
+
+    # What runs after the role cannot change what it computes.
+    before = steps[: steps.index(f"role {role}")]
+    # The role's own collection sets none of its inputs: arista.avd.eos_snapshot is no finding.
+    collection = f"role {role.rsplit('.', 1)[0]}."
+    return (*found, *(step for step in before if not step.startswith(collection)))
+
+
+def _step(task: dict) -> str:
+    """A task as `beyond_role` names it: the role it pulls in, or its own name."""
+    pulled = _task_roles(task)
+    if pulled:
+        return f"role {pulled[0].name}"
+    named = task.get("name") or next(iter(task), "")
+    return f'task "{named}"'
+
+
+def _keyword_role(item: object) -> str | None:
+    """The role an entry of the roles keyword names."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        named = item.get("role") or item.get("name")
+        return str(named) if named else None
+    return None
+
+
+def _task_roles(task: dict) -> list[RoleRef]:
+    """The roles a task pulls in, by either spelling of import_role and include_role."""
+    roles: list[RoleRef] = []
+    for how in (IMPORT_ROLE, INCLUDE_ROLE):
+        # Both spellings: the short name and the fully qualified one.
+        for key in (how, f"ansible.builtin.{how}"):
+            value = task.get(key)
+            if isinstance(value, dict) and value.get("name"):
+                roles.append(RoleRef(str(value["name"]), how))
+            elif isinstance(value, str):  # free-form: `import_role: name=x`
+                roles.append(RoleRef(value, how))
+    return roles
 
 
 def _flatten(tasks: list) -> list[dict]:

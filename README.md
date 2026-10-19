@@ -247,6 +247,9 @@ topology or be named as left out.
 - One play per `Fabric`, and one play per lab. Another play of the same playbook is
   another run: `report --play N --name NAME`, `emit` the same, `lab --play N`. Each
   names the plays it did not carry.
+- The play is rendered as one role, `eos_designs`. A task before it other than an
+  `arista.avd` role, `vars_files`, or a template in `hosts` is named under Not carried,
+  and `report` exits 2: simplify the play, or carry it by hand.
 - `lab` cables `EthernetN` only. A subinterface rides on its parent's cable, and a
   breakout such as `Ethernet1/4` is left out and named.
 - netclab-chart names a veth `<release>-<network>-<hash>` within the 15 bytes Linux
