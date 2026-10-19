@@ -25,6 +25,7 @@ args = sys.argv[1:]
     "args": args,
     "cwd": os.getcwd(),
     "collections": os.environ.get("ANSIBLE_COLLECTIONS_PATH"),
+    "callback": os.environ.get("ANSIBLE_STDOUT_CALLBACK"),
 }))
 plan = json.loads((here / "plan.json").read_text())
 extra = json.loads(args[args.index("-e") + 1])
@@ -166,6 +167,18 @@ def test_ansible_runs_in_the_copy_with_the_given_collections(ansible, repo, coll
     assert Path(made["cwd"]).resolve() == (work / "repo").resolve()
     assert made["collections"] == str(collections)
     assert made["args"][0] == RENDER_PLAYBOOK
+
+
+def test_ansible_prints_with_its_own_callback_whatever_ansible_cfg_names(
+    ansible, repo, collections, tmp_path
+):
+    (repo / "ansible.cfg").write_text(
+        "[defaults]\ninventory = inventory.yml\nstdout_callback = yaml\n"
+    )
+
+    built(ansible, repo, collections, tmp_path / "work")
+
+    assert call(ansible)["callback"] == "default"
 
 
 def test_the_render_sets_the_three_values_above_the_repositorys_own(

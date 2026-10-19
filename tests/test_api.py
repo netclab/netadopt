@@ -31,6 +31,7 @@ def test_the_contract_is_these_names():
         "read_inventory",
         "reconstruct",
         "render",
+        "render_env",
         "render_extra_vars",
         "render_play",
         "resolve_ansible",
@@ -72,6 +73,7 @@ def test_constant(name, value):
         ("rfc1123", "(name: 'str') -> 'str'"),
         ("fit", "(name: 'str') -> 'str'"),
         ("render_extra_vars", "(out: 'Path') -> 'dict'"),
+        ("render_env", "(collections: 'Path') -> 'dict'"),
     ],
 )
 def test_function_signature(name, expected):

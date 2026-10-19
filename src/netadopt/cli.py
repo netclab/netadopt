@@ -40,7 +40,7 @@ from netadopt.lab import (
 )
 from netadopt.playbook import IMPORT_ROLE, Play, Playbook, find_playbooks, read_playbook
 from netadopt.pools import Pools, find_pools
-from netadopt.render import RENDER_ROLE, render
+from netadopt.render import RENDER_ROLE, STDOUT_CALLBACK, render
 from netadopt.repocode import Code, code_directories, find_code
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
 from netadopt.xr import (
@@ -274,7 +274,7 @@ def report(
             # on a line of its own, never wrapped, so that it can be copied
             command = _vault_secret_command(repo, adoption)
             console.print(f"    {command}", soft_wrap=True, markup=False)
-    warnings = _warnings(repo, code, listed, var_files, inputs, adoption)
+    warnings = _warnings(repo, config, code, listed, var_files, inputs, adoption)
     _print_section(console, "Warnings", "yellow", warnings)
 
     unreadable = read is None or not read.usable or not listed.usable or not config.usable
@@ -767,6 +767,7 @@ def _not_carried(
 
 def _warnings(
     repo: Path,
+    config: AnsibleCfg,
     code: tuple[Code, ...],
     listed: Inventory,
     found: VarFiles,
@@ -783,6 +784,15 @@ def _warnings(
             rows.append(
                 (piece.path, f"code Ansible loads, named by {piece.setting} in ansible.cfg")
             )
+
+    # Carried as written, and outranked where Ansible renders (render_env).
+    callback = config.stdout_callback
+    if callback not in (None, STDOUT_CALLBACK, f"ansible.builtin.{STDOUT_CALLBACK}"):
+        why = (
+            "the callback Ansible prints with, named by stdout_callback in ansible.cfg; "
+            f"lab and the cluster print with {STDOUT_CALLBACK}"
+        )
+        rows.append((callback, why))
 
     fabric_documents = adoption.documents if adoption else ()
     for where, names in plain_passwords(fabric_documents + inputs.documents):

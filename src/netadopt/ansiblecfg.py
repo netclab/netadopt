@@ -41,6 +41,11 @@ class AnsibleCfg:
         """The path `[defaults] vault_password_file` names, as written."""
         return self.sections.get("defaults", {}).get("vault_password_file") or None
 
+    @property
+    def stdout_callback(self) -> str | None:
+        """The callback `[defaults] stdout_callback` names, as written."""
+        return self.sections.get("defaults", {}).get("stdout_callback") or None
+
 
 def read_ansible_cfg(repo: Path) -> AnsibleCfg:
     """`repo/ansible.cfg`, section by section, every value the string it is written as.

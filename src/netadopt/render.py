@@ -34,6 +34,7 @@ from netadopt.playbook import IMPORT_PLAYBOOK_KEYS, TASK_KEYS, read_playbook
 
 RENDER_ROLE = "arista.avd.eos_designs"
 RENDER_PLAYBOOK = "netadopt-render.yml"
+STDOUT_CALLBACK = "default"
 
 # Seconds: the whole fabric, and the corpus holds plays of 501 devices.
 RENDER_TIMEOUT = 1800
@@ -130,8 +131,8 @@ def _run(
             command,
             check=False,
             cwd=root,
-            # The collections netadopt pins, for this subprocess and no other.
-            env={**os.environ, "ANSIBLE_COLLECTIONS_PATH": str(collections)},
+            # For this subprocess and no other.
+            env={**os.environ, **render_env(collections)},
             capture_output=True,
             text=True,
             timeout=RENDER_TIMEOUT,
@@ -142,6 +143,20 @@ def _run(
         return f"{ansible.exe} could not be run: {err}"
     except subprocess.TimeoutExpired:
         return f"{RENDER_ROLE} did not finish in {RENDER_TIMEOUT}s"
+
+
+def render_env(collections: Path) -> dict:
+    """What the render sets in Ansible's environment, over the user's and ansible.cfg's.
+
+    The collections netadopt pins, and Ansible's own stdout callback: `stdout_callback =
+    yaml` names one of community.general, which the pinned set does not hold and whose
+    12.0.0 removed it. A callback only prints, so the render is the same, and the lines
+    a failure is read from are the default callback's.
+    """
+    return {
+        "ANSIBLE_COLLECTIONS_PATH": str(collections),
+        "ANSIBLE_STDOUT_CALLBACK": STDOUT_CALLBACK,
+    }
 
 
 def render_extra_vars(out: Path) -> dict:

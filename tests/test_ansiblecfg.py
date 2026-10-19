@@ -97,6 +97,18 @@ def test_no_inventory_named_is_none(tmp_path: Path):
     assert read_ansible_cfg(tmp_path).inventory == ()
 
 
+def test_the_stdout_callback_it_names_is_as_written(tmp_path: Path):
+    write(tmp_path, "[defaults]\nstdout_callback = community.general.yaml\n")
+
+    assert read_ansible_cfg(tmp_path).stdout_callback == "community.general.yaml"
+
+
+def test_no_stdout_callback_named_is_none(tmp_path: Path):
+    write(tmp_path, "[defaults]\ninventory = inventory.yml\n")
+
+    assert read_ansible_cfg(tmp_path).stdout_callback is None
+
+
 def test_no_file_is_no_problem(tmp_path: Path):
     found = read_ansible_cfg(tmp_path)
 

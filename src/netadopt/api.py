@@ -1,9 +1,10 @@
 """What function-avd imports from netadopt: a change here is a breaking change.
 
 function-avd reconstructs a repository from a Fabric and renders it with AVD's own
-role, from the play and the extra vars `lab` renders with, so the two cannot drift
-apart; it names the objects it composes as `emit` names its own; its image installs the
-collections, and its tests read the inventory. Each name is pinned by tests/test_api.py.
+role, from the play, the extra vars and the environment `lab` renders with, so the two
+cannot drift apart; it names the objects it composes as `emit` names its own; its image
+installs the collections, and its tests read the inventory. Each name is pinned by
+tests/test_api.py.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.galaxy import Collections, ensure_collections
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.reconstruct import Reconstructed, reconstruct
-from netadopt.render import Rendered, render, render_extra_vars, render_play
+from netadopt.render import Rendered, render, render_env, render_extra_vars, render_play
 from netadopt.xr import API_VERSION, FABRIC_LABEL, fit, rfc1123
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "read_inventory",
     "reconstruct",
     "render",
+    "render_env",
     "render_extra_vars",
     "render_play",
     "resolve_ansible",

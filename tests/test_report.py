@@ -264,6 +264,28 @@ def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo,
     assert result.exit_code == 2
 
 
+@pytest.mark.parametrize(
+    ("callback", "warned"),
+    [("yaml", True), ("community.general.yaml", True), ("default", False)],
+)
+def test_a_stdout_callback_other_than_the_default_is_a_warning_and_fails_nothing(
+    repo, ansible, callback, warned
+):
+    write(
+        repo, {"ansible.cfg": f"[defaults]\ninventory=inventory.yml\nstdout_callback={callback}\n"}
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    row = (
+        f"{callback} the callback Ansible prints with, named by stdout_callback in ansible.cfg; "
+        "lab and the cluster print with default"
+    )
+    assert (row in section(result.output, "Warnings")) is warned
+    assert result.exit_code == 0, result.output
+
+
 def test_a_part_of_the_model_not_carried_fails_the_report(repo, ansible):
     write(repo, {"group_vars/FABRIC.yml": "$ANSIBLE_VAULT;1.1;AES256\n6162\n"})
 
