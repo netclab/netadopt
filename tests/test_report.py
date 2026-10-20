@@ -69,19 +69,19 @@ def repo(tmp_path: Path) -> Path:
 @pytest.fixture
 def ansible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A pretend Ansible installed beside the interpreter, as the avd extra installs it:
-    ansible-playbook says its version, and ansible-inventory lists LISTED and writes
+    ansible-playbook says its version, and ansible-inventory lists `listed` and writes
     `stderr`."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     interpreter = sys.executable  # captured now; make() replaces sys.executable
 
-    def make(stderr: str = "") -> None:
+    def make(stderr: str = "", listed: dict = LISTED) -> None:
         playbook = bin_dir / "ansible-playbook"
         playbook.write_text(f"#!{interpreter}\nprint('ansible-playbook [core 2.21.3]')\n")
         inventory = bin_dir / "ansible-inventory"
         inventory.write_text(
             f"#!{interpreter}\nimport sys\n"
-            f"sys.stdout.write({json.dumps(LISTED)!r})\n"
+            f"sys.stdout.write({json.dumps(listed)!r})\n"
             f"sys.stderr.write({stderr!r})\n"
         )
         for exe in (playbook, inventory):
@@ -203,7 +203,7 @@ def test_the_renders_row_carries_the_play_it_reported(repo, ansible):
     ansible()
     result = report(repo, "--playbook", "build.yml", "--play", "1")
 
-    assert f"Renders not measured netadopt avd lab {repo} --playbook build.yml --play 1" in (
+    assert f"Renders not measured netadopt avd compare {repo} --playbook build.yml --play 1" in (
         squeezed(result.output.splitlines())
     )
 
@@ -236,7 +236,7 @@ def test_whether_the_design_renders_is_not_measured_and_the_row_says_what_measur
     result = report(repo, "--playbook", "build.yml", "--inventory", "inventory/")
 
     assert (
-        f"Renders not measured netadopt avd lab {repo} --playbook build.yml "
+        f"Renders not measured netadopt avd compare {repo} --playbook build.yml "
         "--inventory inventory/" in squeezed(result.output.splitlines())
     )
 
@@ -245,7 +245,9 @@ def test_the_renders_row_names_no_playbook_it_was_not_given(repo, ansible):
     ansible()
     result = report(repo)
 
-    assert f"Renders not measured netadopt avd lab {repo}" in squeezed(result.output.splitlines())
+    assert f"Renders not measured netadopt avd compare {repo}" in squeezed(
+        result.output.splitlines()
+    )
 
 
 def test_a_code_directory_is_a_warning_is_not_carried_and_fails_the_report(repo, ansible):
@@ -313,6 +315,62 @@ def test_a_task_before_eos_designs_is_not_carried_and_one_after_it_is_not_named(
     assert result.exit_code == (2 if row else 0), result.output
 
 
+@pytest.mark.parametrize(
+    ("hosts", "row"),
+    [
+        ("AVD_FABRIC", "play [0] hosts 'AVD_FABRIC' is no group or host of the inventory"),
+        ("FABRIC", None),
+        ("dc1-spine1", None),
+        ("FABRIC:!DC2", None),
+        ("localhost", None),
+    ],
+    ids=["no-such-group", "a-group", "a-host", "a-pattern-is-ansibles", "implicit-localhost"],
+)
+def test_hosts_naming_nothing_in_the_inventory_is_not_carried(repo, ansible, hosts, row):
+    write(
+        repo,
+        {
+            "build.yml": f"""
+            - hosts: "{hosts}"
+              tasks:
+                - ansible.builtin.import_role:
+                    name: arista.avd.eos_designs
+            """
+        },
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    rows = [line for line in section(result.output, "Not carried") if line.startswith("play [0]")]
+    assert rows == ([row] if row else [])
+    assert result.exit_code == (2 if row else 0), result.output
+
+
+def test_both_findings_of_one_play_share_its_row(repo, ansible):
+    write(
+        repo,
+        {
+            "build.yml": """
+            - hosts: AVD_FABRIC
+              tasks:
+                - name: Import global vars
+                  ansible.builtin.include_vars: global.yml
+                - ansible.builtin.import_role:
+                    name: arista.avd.eos_designs
+            """
+        },
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert (
+        'play [0] more than eos_designs: task "Import global vars"; '
+        "hosts 'AVD_FABRIC' is no group or host of the inventory"
+    ) in section(result.output, "Not carried")
+
+
 def test_a_play_pulling_in_no_eos_designs_is_not_carried(repo, ansible):
     write(
         repo,
@@ -334,6 +392,117 @@ def test_a_play_pulling_in_no_eos_designs_is_not_carried(repo, ansible):
     result = report(repo, "--playbook", "build.yml")
 
     assert "play [0] more than eos_designs: no eos_designs" in section(result.output, "Not carried")
+    assert result.exit_code == 2
+
+
+def test_a_collections_path_is_a_warning_and_fails_nothing(repo, ansible):
+    write(
+        repo,
+        {"ansible.cfg": "[defaults]\ninventory=inventory.yml\ncollections_paths=../ansible-avd\n"},
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert (
+        "../ansible-avd code Ansible loads, named by collections_paths in ansible.cfg; "
+        "lab and the cluster render with the collections netadopt pins"
+    ) in section(result.output, "Warnings")
+    assert section(result.output, "Not carried") == [
+        "play [1] Build the twin a separate run: --play 1 --name NAME"
+    ]
+    assert result.exit_code == 0, result.output
+
+
+def test_a_key_avd_removed_is_not_carried_and_fails_the_report(repo, ansible):
+    write(repo, {"group_vars/FABRIC.yml": "fabric_name: FABRIC\nname_servers: [192.168.1.1]\n"})
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert (
+        "group_vars/FABRIC.yml The input data model 'name_servers' was removed in AVD "
+        "version 6.0.0. Use 'dns_settings.servers' instead."
+    ) in section(result.output, "Not carried")
+    assert result.exit_code == 2
+
+
+def test_a_play_without_eos_designs_is_not_judged_by_its_schema(repo, ansible):
+    write(
+        repo,
+        {
+            "group_vars/FABRIC.yml": "local_users: [{name: admin}]\n",
+            "build.yml": """
+            - hosts: FABRIC
+              tasks:
+                - ansible.builtin.import_role:
+                    name: arista.avd.eos_cli_config_gen
+            """,
+        },
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert "was removed in AVD version" not in result.output
+
+
+# rsp-demo's shape: a host another play renders with eos_cli_config_gen alone, whose
+# vars hold a key that model keeps.
+OUTSIDE = {**LISTED, "all": {"children": ["FABRIC", "CGNAT"]}, "CGNAT": {"hosts": ["cgnat1"]}}
+
+
+def test_a_removed_key_in_the_vars_of_a_host_outside_the_play_is_not_judged(repo, ansible):
+    write(
+        repo,
+        {
+            "host_vars/cgnat1.yml": "local_users: [{name: admin}]\n",
+            "group_vars/CGNAT.yml": "name_servers: [192.168.1.1]\n",
+        },
+    )
+
+    ansible(listed=OUTSIDE)
+    result = report(repo, "--playbook", "build.yml")
+
+    assert "was removed in AVD version" not in result.output
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize(
+    "path", ["host_vars/dc1-spine1.yml", "group_vars/all.yml"], ids=["its-host", "all"]
+)
+def test_a_removed_key_in_vars_reaching_the_plays_hosts_is_judged(repo, ansible, path):
+    write(repo, {path: "name_servers: [192.168.1.1]\n"})
+
+    ansible(listed=OUTSIDE)
+    result = report(repo, "--playbook", "build.yml")
+
+    assert any(
+        line.startswith(f"{path} The input data model 'name_servers' was removed")
+        for line in section(result.output, "Not carried")
+    )
+    assert result.exit_code == 2
+
+
+def test_a_file_lookup_is_not_carried_and_fails_the_report(repo, ansible):
+    # rsp-ref-arch's shape: the copy holds the file, repo' does not.
+    write(
+        repo,
+        {
+            "group_vars/FABRIC.yml": """
+            fabric_name: FABRIC
+            route_maps: "{{ lookup('file', 'mpls_evpn.rcf') }}"
+            """,
+            "mpls_evpn.rcf": "router general\n",
+        },
+    )
+
+    ansible()
+    result = report(repo, "--playbook", "build.yml")
+
+    assert (
+        "group_vars/FABRIC.yml lookup('file', 'mpls_evpn.rcf'): the file it reads is not carried"
+    ) in section(result.output, "Not carried")
     assert result.exit_code == 2
 
 

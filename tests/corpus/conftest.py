@@ -47,6 +47,10 @@ from netadopt.render import Rendered, render
 AVD_ENV = "NETADOPT_AVD"
 MOLECULE_FILE = "molecule.yml"
 
+# How emit begins what it does not carry, and a file lookup's line among them.
+NOT_CARRIED = "not carried: "
+LOOKUP_NOT_CARRIED = "not carried: the file "
+
 # tests/corpus/conftest.py -> the repository root
 AVD_SUBMODULE = Path(__file__).resolve().parents[2] / "avd"
 
@@ -183,12 +187,17 @@ def emitted(
     """What `emit` writes for the repository's first play.
 
     `listed` first: a repository with no inventory of its own is skipped, not failed.
+
+    A file lookup is the one reason to fail allowed here: the file it reads is not
+    carried, and what is carried must still resolve as its source does.
     """
     args = ["avd", "emit", str(repo), "--playbook", playbook]
     if inventory_source:
         args += ["--inventory", inventory_source]
     result = CliRunner().invoke(app, args)
-    assert result.exit_code == 0, result.stderr
+    said = [line for line in result.stderr.splitlines() if line.startswith(NOT_CARRIED)]
+    lookups_only = bool(said) and all(line.startswith(LOOKUP_NOT_CARRIED) for line in said)
+    assert result.exit_code == 0 or (result.exit_code == 2 and lookups_only), result.stderr
     return list(yaml.safe_load_all(result.stdout))
 
 

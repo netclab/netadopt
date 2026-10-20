@@ -411,6 +411,18 @@ def test_a_code_directory_ansible_cfg_names_is_not_carried_and_fails_the_run(rep
     ) in result.stderr
 
 
+def test_a_collections_path_ansible_cfg_names_is_carried_as_written_and_fails_nothing(repo):
+    (repo / "ansible.cfg").write_text(
+        "[defaults]\ninventory=inventory.yml\ncollections_paths=../ansible-avd\n"
+    )
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 0, result.stderr
+    assert documents[0]["spec"]["ansibleCfg"]["defaults"]["collections_paths"] == "../ansible-avd"
+    assert "../ansible-avd" not in result.stderr
+
+
 def test_extra_vars_files_become_the_fabrics_extra_vars_the_later_winning_a_key(repo, tmp_path):
     (tmp_path / "lab.yml").write_text("ansible_host: lab\nmanagement_eapi: {enabled: true}\n")
     (tmp_path / "mine.yml").write_text("ansible_host: mine\n")
@@ -448,3 +460,17 @@ def test_an_extra_vars_file_that_is_no_mapping_emits_nothing(repo, tmp_path):
     assert result.exit_code == 2
     assert documents == []
     assert "holds list, not a mapping" in result.stderr
+
+
+def test_a_file_lookup_is_emitted_as_written_named_and_fails_the_run(repo):
+    lookup = "{{ lookup('file', 'mpls_evpn.rcf') }}"
+    (repo / "group_vars" / "FABRIC.yml").write_text(f'route_maps: "{lookup}"\n')
+    (repo / "mpls_evpn.rcf").write_text("router general\n")
+
+    result, documents = emit(repo, "--playbook", "build.yml")
+
+    assert result.exit_code == 2
+    assert {"route_maps": lookup} in [doc["spec"].get("design") for doc in documents]
+    assert (
+        "not carried: the file lookup('file', 'mpls_evpn.rcf') reads, in group_vars/FABRIC.yml"
+    ) in result.stderr

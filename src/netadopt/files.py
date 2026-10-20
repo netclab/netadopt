@@ -91,6 +91,49 @@ def find_named_files(found: VarFiles, play: dict, groups: dict, repo: Path, play
     return Named(files=tuple(files.values()), notes=tuple(notes))
 
 
+# A file read by Ansible's file lookup, in any of its three spellings. Only the templates
+# above are carried, so the file it reads is not in the rebuilt repository.
+_FILE_LOOKUP = re.compile(
+    r"""\b(?:lookup|query|q)\(\s*(['"])(?:ansible\.builtin\.)?file\1[^)]*\)"""
+)
+
+PLAY_VARS = "the play's vars"
+INVENTORY = "the inventory"
+
+
+def file_lookups(found: VarFiles, play: dict, groups: dict) -> tuple[tuple[Path | str, str], ...]:
+    """Each file lookup in the vars, the play's vars or the inventory, and where it is.
+
+    The place is the vars file's path, or PLAY_VARS, or INVENTORY. A lookup in a var
+    nothing reads is named too: whether the render reads it is the render's to say.
+    """
+    scopes: list[tuple[Path | str, object]] = [
+        (file.path, file.data) for file in found.files if file.data
+    ]
+    scopes += [(PLAY_VARS, play.get("vars")), (INVENTORY, groups)]
+    said: dict[tuple[Path | str, str], None] = {}
+    for where, scope in scopes:
+        for value in _every_string(scope):
+            # Jinja runs a lookup only inside an expression or a statement.
+            if "{{" not in value and "{%" not in value:
+                continue
+            for match in _FILE_LOOKUP.finditer(value):
+                said[(where, match.group(0))] = None
+    return tuple(said)
+
+
+def _every_string(node: object):
+    """Every string, however long: a lookup may sit in a multi-line value."""
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _every_string(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _every_string(value)
+    elif isinstance(node, str):
+        yield node
+
+
 def _strings(node: object):
     if isinstance(node, dict):
         for value in node.values():

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from netadopt.ansible import Ansible, find_ansible
-from netadopt.inventory import NOTHING_PARSED, read_inventory
+from netadopt.inventory import NOTHING_PARSED, Inventory, read_inventory
 
 LISTED = {
     "_meta": {"hostvars": {"dc1-leaf1a": {"type": "l3leaf"}, "dc1-spine1": {}}},
@@ -170,3 +170,30 @@ def test_with_no_ansible_at_all_the_ansible_problem_is_carried_forward(tmp_path)
     assert not listed.usable
     assert "no Ansible to ask" in listed.problem
     assert ansible.problem in listed.problem
+
+
+# As `--list` writes a tree: each group's own hosts and children only.
+TREE = Inventory(
+    groups={
+        "all": {"children": ["ungrouped", "FABRIC", "CGNAT"]},
+        "FABRIC": {"children": ["DC1_SPINES", "DC1_LEAVES"]},
+        "DC1_SPINES": {"hosts": ["dc1-spine1"]},
+        "DC1_LEAVES": {"hosts": ["dc1-leaf1a"], "children": ["DC1_SPINES"]},
+        "CGNAT": {"hosts": ["cgnat1"]},
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "group, hosts",
+    [
+        ("FABRIC", {"dc1-spine1", "dc1-leaf1a"}),
+        ("DC1_LEAVES", {"dc1-leaf1a", "dc1-spine1"}),
+        ("all", {"dc1-spine1", "dc1-leaf1a", "cgnat1"}),
+        ("CGNAT", {"cgnat1"}),
+        ("ungrouped", set()),
+        ("NOWHERE", set()),
+    ],
+)
+def test_a_groups_members_are_its_hosts_and_those_of_every_group_below(group, hosts):
+    assert set(TREE.members(group)) == hosts

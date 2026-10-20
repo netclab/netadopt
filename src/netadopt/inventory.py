@@ -54,6 +54,24 @@ class Inventory:
         named.update(dict.fromkeys(self.hostvars))
         return tuple(named)
 
+    def members(self, group: str) -> tuple[str, ...]:
+        """The hosts of `group` and of every group below it.
+
+        `--list` gives each group its own hosts and children only; `all` is a group too.
+        """
+        named: dict[str, None] = {}
+        seen: set[str] = set()
+        pending = [group]
+        while pending:
+            name = pending.pop()
+            node = self.groups.get(name)
+            if name in seen or not isinstance(node, dict):
+                continue
+            seen.add(name)
+            named.update(dict.fromkeys(node.get("hosts") or []))
+            pending.extend(node.get("children") or [])
+        return tuple(named)
+
 
 def read_inventory(ansible: Ansible, repo: Path, source: str | None = None) -> Inventory:
     """Run `ansible-inventory --list` in `repo` and return what it says.

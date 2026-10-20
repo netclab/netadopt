@@ -45,6 +45,10 @@ CODE_PATH_KEYS = (
     "vars_plugins",
 )
 
+# Of those, the ones the render replaces with the collections netadopt pins (render_env):
+# nothing there needs carrying.
+COLLECTIONS_KEYS = ("collections_path", "collections_paths")
+
 
 @dataclass(frozen=True)
 class Code:

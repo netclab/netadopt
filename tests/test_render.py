@@ -26,6 +26,7 @@ args = sys.argv[1:]
     "cwd": os.getcwd(),
     "collections": os.environ.get("ANSIBLE_COLLECTIONS_PATH"),
     "callback": os.environ.get("ANSIBLE_STDOUT_CALLBACK"),
+    "vault": os.environ.get("ANSIBLE_VAULT_PASSWORD_FILE"),
 }))
 plan = json.loads((here / "plan.json").read_text())
 extra = json.loads(args[args.index("-e") + 1])
@@ -179,6 +180,24 @@ def test_ansible_prints_with_its_own_callback_whatever_ansible_cfg_names(
     built(ansible, repo, collections, tmp_path / "work")
 
     assert call(ansible)["callback"] == "default"
+
+
+def test_a_vault_password_file_given_reaches_ansible(ansible, repo, collections, tmp_path):
+    password = tmp_path / "vault-password"
+
+    built(ansible, repo, collections, tmp_path / "work", vault_password_file=password)
+
+    assert call(ansible)["vault"] == str(password)
+
+
+def test_none_given_leaves_the_environment_as_it_is(
+    ansible, repo, collections, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ANSIBLE_VAULT_PASSWORD_FILE", "/the/users/own")
+
+    built(ansible, repo, collections, tmp_path / "work")
+
+    assert call(ansible)["vault"] == "/the/users/own"
 
 
 def test_the_render_sets_the_three_values_above_the_repositorys_own(

@@ -25,6 +25,18 @@ and the two libraries AVD requires with them, distlib and netaddr. pyavd is pinn
 the AVD version shown by `netadopt --version`. netadopt uses only this Ansible; one
 already installed elsewhere on the machine is not used.
 
+## Four commands
+
+| Command | Answers | Renders with AVD |
+|---|---|---|
+| `netadopt avd report` | What is in the repository, and what of it cannot be carried? | no - seconds |
+| `netadopt avd emit` | The YAML for Kubernetes: one `Fabric`, a `FabricInput` per group or host | no - seconds |
+| `netadopt avd compare` | Does emit's YAML carry the repository? Every host, compared | twice |
+| `netadopt avd lab` | A lab of the fabric's switches, cabled as AVD cables them | once |
+
+Each takes the repository's directory and the playbook it is built with. `report` also
+runs without a playbook, and names the files that read as one.
+
 ## Reading an AVD repository
 
 The examples here are AVD's own `single-dc-l3ls`, because anyone can clone it; the
@@ -40,7 +52,7 @@ Config      ansible.cfg
 Inventory   named by ansible.cfg   8 hosts, 8 groups
 Variables   8 files                group_vars 8, host_vars 0
 Playbook    build.yml              1 play
-Renders     not measured           netadopt avd lab single-dc-l3ls --playbook build.yml
+Renders     not measured           netadopt avd compare single-dc-l3ls --playbook build.yml
 
 #   Play                                     Hosts    Roles
 ─────────────────────────────────────────────────────────────────────────────────────
@@ -67,12 +79,13 @@ Warnings
 - **Warnings** are carried, but worth knowing: a password in plain text, a vars file
   for a host the inventory does not have.
 - **Renders** is not measured here. Rendering runs everything the vars hold and needs
-  AVD's collections, so it belongs to `netadopt avd lab`, and the row is the command
-  that measures it. A report says the model was read, never that it builds.
+  AVD's collections, so it belongs to `netadopt avd compare`, and the row is the
+  command that measures it. A report says the model was read, never that it builds.
 
-Exit codes: `0` when the model is carried whole, warnings or not; `2` when a part of
-it is not carried or something did not read; `1` when netadopt was installed without
-the `avd` extra, and then nothing else is reported.
+Exit codes: `0` when nothing in the repository stops it being carried, warnings or
+not; `2` when a part of it is not carried or something did not read; `1` when netadopt
+was installed without the `avd` extra, and then nothing else is reported. A `0` is not
+the proof that emit's YAML carries the repository: `compare` is.
 
 ## Writing Kubernetes manifests
 
@@ -121,6 +134,37 @@ kubectl apply --server-side -f single-dc-l3ls.yaml
 A plain `kubectl apply` drops every `key: null` in a map, and AVD reads a null
 differently from a missing key.
 
+## Proving emit's YAML carries the repository
+
+```
+$ netadopt avd compare single-dc-l3ls --playbook build.yml
+rendering play [0] of build.yml with arista.avd.eos_designs
+rendering the repository rebuilt from emit's YAML
+single-dc-l3ls
+
+Ansible      ansible-core 2.21.4   ~/.local/share/uv/tools/netadopt/bin/ansible-playbook
+Repository   rendered              8 hosts
+Rebuilt      rendered              8 hosts
+Compared     identical             8 of 8 hosts identical
+```
+
+`compare` renders the fabric twice with AVD's own `eos_designs`: from the repository,
+and from the repository rebuilt from the YAML `emit` writes - the one a cluster
+renders. Then it compares every host's structured configuration, whole. Identical on
+every host says that YAML carries the repository.
+
+Anything else is named. A host that differs is listed with the keys of its structured
+configuration that differ; a host only one render has, with the side it is on; a
+render that fails, with what Ansible said. A file the vars read that `emit` does not
+carry fails the rebuilt render here, before a cluster ever sees it.
+
+Both renders run as `lab`'s does, on copies, with the collections netadopt pins. The
+vault password reaches the rebuilt repository from the file `ansible.cfg` names, as the
+Secret does in a cluster. Extra vars are not given to either render.
+
+Exit codes: `0` when every host is identical; `2` when a host differs, a render fails,
+or emit's YAML cannot be written; `1` without the `avd` extra.
+
 ## Building a lab from the fabric
 
 `lab` writes a lab topology of the same fabric: the cabling, as nodes and networks.
@@ -167,9 +211,10 @@ AVD's, so netadopt renders the repository with AVD to get it - on a copy, never 
 repository, and with the collections it pins, fetched into its own cache the first time
 and never again.
 
-That render is also the answer `report` cannot give: once a run reaches `rendered N
-hosts`, the repository builds on the AVD version shown by `netadopt --version`. A run
-that stops instead prints what AVD refused, host by host.
+The lab is the repository's twin as it is: once a run reaches `rendered N hosts`, the
+repository builds on the AVD version shown by `netadopt --version`. A run that stops
+instead prints what AVD refused, host by host. Whether emit's YAML carries it is
+`compare`'s question, not `lab`'s.
 
 A peer outside the fabric - a server, a firewall - becomes the node `--connected`
 says: `linux` by default, or `ceos`, or `none` to leave it out. `--ceos-image`,
@@ -217,10 +262,10 @@ named in its `ansible.cfg`. `report` names both under Warnings - after running t
 
 `emit` runs no Ansible; it only reads files. Neither renders Jinja.
 
-`lab` does render it, with AVD, so everything in the vars runs - a `lookup('pipe',
-...)` included. It renders on a copy of the repository, never in it, and it is the one
-command that reaches the network itself: on its first run, to fetch the collections it
-pins.
+`lab` and `compare` do render it, with AVD, so everything in the vars runs - a
+`lookup('pipe', ...)` included. They render on copies of the repository, never in it,
+and they are the commands that reach the network themselves: on the first run of
+either, to fetch the collections netadopt pins.
 
 None of them connects to a device.
 
@@ -233,23 +278,34 @@ version shown by `netadopt --version`, among them:
 - `cv-pathfinder`: a vaulted password
 - the unit-test scenarios, with hundreds of hosts
 
-Every one that can be carried is emitted, rebuilt from the resources, and resolved by
+Every one that can be carried is emitted, rebuilt from emit's YAML, and resolved by
 Ansible on both sides, and every host must end up with the same variables. Every one
-that renders is also built into a lab, where each cable AVD wrote has to reach the
-topology or be named as left out.
+that renders is rendered from emit's YAML too, and every host's structured
+configuration must equal the repository's own, as `compare` checks it. Every one that
+renders is also built into a lab, where each cable AVD wrote has to reach the topology
+or be named as left out.
 
 ## Limits
 
+- AVD is the version `netadopt --version` names. A vars file of the play's hosts
+  holding a key that AVD removed is named under Not carried, and `report` exits 2.
+- A file the vars read with `lookup('file', ...)` is not carried: the lookup is named
+  under Not carried, and `report` and `emit` exit 2.
 - The inventory must be a YAML file. An executable or dynamic inventory is not
   carried.
 - A code directory named in `ansible.cfg`, such as `vars_plugins = plugins/vars`, is not
   carried.
+- `collections_path` in `ansible.cfg` is not used: `compare`, `lab` and the cluster
+  take AVD's collections from netadopt, not from the repository.
 - One play per `Fabric`, and one play per lab. Another play of the same playbook is
-  another run: `report --play N --name NAME`, `emit` the same, `lab --play N`. Each
-  names the plays it did not carry.
+  another run: `report --play N --name NAME`, `emit` the same, `compare --play N`,
+  `lab --play N`. Each names the plays it did not carry.
+- `compare` gives neither render extra vars: a repository built with `-e` is compared
+  without them.
 - The play is rendered as one role, `eos_designs`. A task before it other than an
-  `arista.avd` role, `vars_files`, or a template in `hosts` is named under Not carried,
-  and `report` exits 2: simplify the play, or carry it by hand.
+  `arista.avd` role, `vars_files`, a template in `hosts`, or a `hosts` naming no group
+  or host of the inventory is named under Not carried, and `report` exits 2: simplify
+  the play, or carry it by hand.
 - `lab` cables `EthernetN` only. A subinterface rides on its parent's cable, and a
   breakout such as `Ethernet1/4` is left out and named.
 - netclab-chart names a veth `<release>-<network>-<hash>` within the 15 bytes Linux
@@ -258,7 +314,6 @@ topology or be named as left out.
 
 ## Where this is going
 
-- The same proof on your own repository, not only a report.
 - `lab --for containerlab`, beside netclab-chart.
 - A second ecosystem after AVD, under a subcommand of its own, with its model kept as
   its vendor writes it.

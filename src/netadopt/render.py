@@ -66,11 +66,16 @@ def render(
     work: Path,
     play: int = 0,
     inventory: str | None = None,
+    vault_password_file: Path | None = None,
 ) -> Rendered:
     """Render play `play` of `repo` under `work`, and read what AVD wrote.
 
     `work` must be empty or absent: the copy and the structured configurations are
     netadopt's own, and a directory holding somebody else's files is not.
+
+    `vault_password_file` is for a repository that holds no password file of its own,
+    as one rebuilt from the objects never does: Ansible's variable outranks the file
+    ansible.cfg names.
     """
     if not ansible.usable:
         return Rendered(problem=f"no Ansible to render with: {ansible.problem}")
@@ -103,7 +108,7 @@ def render(
     except OSError as err:
         return Rendered(problem=f"{book} could not be written: {err}")
 
-    done = _run(ansible, root, book, collections, out, inventory)
+    done = _run(ansible, root, book, collections, out, inventory, vault_password_file)
     if isinstance(done, str):
         return Rendered(problem=done)
     if done.returncode != 0:
@@ -119,6 +124,7 @@ def _run(
     collections: Path,
     out: Path,
     inventory: str | None,
+    vault_password_file: Path | None = None,
 ) -> subprocess.CompletedProcess | str:
     """The finished ansible-playbook, or why there is none."""
     command = [str(ansible.exe), str(book.relative_to(root))]
@@ -126,13 +132,16 @@ def _run(
         command += ["-i", inventory]
     # As JSON, because a directory may hold a space and `key=value` may not.
     command += ["-e", json.dumps(render_extra_vars(out))]
+    env = {**os.environ, **render_env(collections)}
+    if vault_password_file is not None:
+        env["ANSIBLE_VAULT_PASSWORD_FILE"] = str(vault_password_file)
     try:
         return subprocess.run(
             command,
             check=False,
             cwd=root,
             # For this subprocess and no other.
-            env={**os.environ, **render_env(collections)},
+            env=env,
             capture_output=True,
             text=True,
             timeout=RENDER_TIMEOUT,

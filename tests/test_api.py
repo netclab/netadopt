@@ -66,7 +66,8 @@ def test_constant(name, value):
             "render",
             (
                 "(ansible: 'Ansible', repo: 'Path', playbook: 'str', collections: 'Path', work: 'Path', "
-                "play: 'int' = 0, inventory: 'str | None' = None) -> 'Rendered'"
+                "play: 'int' = 0, inventory: 'str | None' = None, "
+                "vault_password_file: 'Path | None' = None) -> 'Rendered'"
             ),
         ),
         ("render_play", "(raw: 'dict') -> 'dict'"),

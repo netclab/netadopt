@@ -6,10 +6,11 @@ nothing an ecosystem needs is imported at start-up.
 
 from __future__ import annotations
 
+import re
 import shlex
 import tempfile
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated
@@ -25,7 +26,9 @@ from rich.text import Text
 from netadopt import AVD_TESTED, ansible_yaml
 from netadopt.ansible import Ansible, resolve_ansible
 from netadopt.ansiblecfg import AnsibleCfg, read_ansible_cfg
-from netadopt.files import Named, find_named_files
+from netadopt.avdschema import removed_keys
+from netadopt.compare import REPOSITORY, Comparison, Host, compare, render_rebuilt
+from netadopt.files import Named, file_lookups, find_named_files
 from netadopt.galaxy import cache_root, ensure_collections
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
@@ -47,8 +50,8 @@ from netadopt.playbook import (
     read_playbook,
 )
 from netadopt.pools import Pools, find_pools
-from netadopt.render import RENDER_ROLE, STDOUT_CALLBACK, render
-from netadopt.repocode import Code, code_directories, find_code
+from netadopt.render import RENDER_ROLE, STDOUT_CALLBACK, Rendered, render
+from netadopt.repocode import COLLECTIONS_KEYS, Code, code_directories, find_code
 from netadopt.varfiles import GROUP_VARS, VarFiles, read_vars
 from netadopt.xr import (
     CONFIG_MAP,
@@ -151,6 +154,7 @@ class Adoption:
     named: Named = field(default_factory=Named)
     documents: tuple[dict, ...] = ()  # the Fabric, then the ConfigMaps it names
     uncarried_code: tuple[Code, ...] = ()  # code directories ansible.cfg names; never carried
+    lookups: tuple[tuple[Path | str, str], ...] = ()  # file lookups; the files are not carried
     problem: str | None = None  # why there is no Fabric
 
     @property
@@ -213,7 +217,12 @@ def _adopt(
         pools=pools,
         named=named,
         documents=(document, *config_maps),
-        uncarried_code=code_directories(repo, config),
+        uncarried_code=tuple(
+            piece
+            for piece in code_directories(repo, config)
+            if piece.setting not in COLLECTIONS_KEYS
+        ),
+        lookups=file_lookups(found, play.raw, written.groups),
     )
 
 
@@ -253,6 +262,12 @@ def report(
         if playbook
         else None
     )
+    # eos_designs' schema judges only a play that pulls eos_designs in, and only the vars
+    # of its hosts: eos_cli_config_gen alone reads another model, where local_users is no
+    # removed key, and another play renders the other hosts with it.
+    designs = adoption is not None and adoption.play is not None
+    designs = designs and any(role.name == RENDER_ROLE for role in adoption.play.roles)
+    removed = removed_keys(_reaching_play(var_files, listed, adoption)) if designs else ()
 
     # Every part is reported before anything decides the run failed: an unreadable
     # inventory does not hide a readable playbook.
@@ -275,7 +290,10 @@ def report(
     if adoption is not None:
         _print_section(console, "Carried", "green", _carried(adoption, inputs))
         _print_section(
-            console, "Not carried", "red", _not_carried(repo, adoption, var_files, refused)
+            console,
+            "Not carried",
+            "red",
+            _not_carried(repo, adoption, var_files, listed, removed, refused),
         )
         if adoption.vault_file:
             # on a line of its own, never wrapped, so that it can be copied
@@ -290,9 +308,12 @@ def report(
         not adoption
         or not adoption.documents
         or adoption.uncarried_code
+        or adoption.lookups  # the render reads a file repo' does not hold
         or var_files.problems
         or refused is not None  # emit would emit nothing under this name
         or _beyond(adoption)  # the render leaves part of the play out
+        or _unknown_hosts(adoption, listed)  # the play renders no host
+        or removed  # AVD fails the render on a key it removed
     )
     if unreadable or incomplete:
         raise typer.Exit(2)
@@ -345,19 +366,11 @@ def emit(
         said.insert(0, f"--name {name} is spelled {spelled}")
 
     documents = adoption.documents + inputs.documents
-    too_big = [
-        doc
-        for doc in adoption.documents
-        if doc.get("kind") == CONFIG_MAP and config_map_size(doc) > CONFIG_MAP_MAX
-    ]
+    too_big = _too_big(adoption)
     if too_big:
         # a Fabric naming a ConfigMap the cluster refuses would be a Fabric half there
-        for doc in too_big:
-            typer.echo(
-                f"nothing emitted: ConfigMap {doc['metadata']['name']} would hold "
-                f"{config_map_size(doc)} bytes, over the {CONFIG_MAP_MAX} a ConfigMap holds",
-                err=True,
-            )
+        for said in too_big:
+            typer.echo(f"nothing emitted: {said}", err=True)
         raise typer.Exit(2)
     if documents:
         typer.echo(to_yaml(documents), nl=False)
@@ -377,7 +390,7 @@ def emit(
     if not inputs.documents:
         typer.echo(f"no FabricInput: no group_vars or host_vars in {repo}", err=True)
 
-    if not adoption.documents or adoption.uncarried_code or found.problems:
+    if not adoption.documents or adoption.uncarried_code or adoption.lookups or found.problems:
         raise typer.Exit(2)  # emitted, but a part of the model is missing
     raise typer.Exit(0)
 
@@ -426,23 +439,13 @@ def lab(
     if not found.usable:
         typer.echo(f'no Ansible: {found.problem} -- install as: uvx "netadopt[avd]" ...', err=True)
         raise typer.Exit(1)
-
-    root = cache_root()
-    if not root.exists():
-        # The one slow run: four archives, and afterwards nothing reaches the network.
-        typer.echo(f"fetching arista.avd {AVD_TESTED} and its collections into {root}", err=True)
-    collections = ensure_collections(found)
-    for note in collections.notes:
-        typer.echo(note, err=True)
-    if not collections.usable:
-        typer.echo(f"no lab: {collections.problem}", err=True)
-        raise typer.Exit(2)
+    collections = _collections(found, "no lab")
 
     typer.echo(f"rendering play [{play}] of {playbook} with {RENDER_ROLE}", err=True)
     with tempfile.TemporaryDirectory(prefix="netadopt-") as work:
         # The structured configurations are read before the copy goes; nothing else is kept.
         rendered = render(
-            found, repo, playbook, collections.path, Path(work) / "render", play, inventory
+            found, repo, playbook, collections, Path(work) / "render", play, inventory
         )
     if not rendered.usable:
         typer.echo(f"no lab: {rendered.problem}", err=True)
@@ -480,6 +483,134 @@ def lab(
     typer.echo(_lab_summary(built.values), err=True)
     typer.echo(values_yaml(built.values), nl=False)
     raise typer.Exit(0)
+
+
+@avd.command(name="compare")
+def compare_command(
+    repo: Repo,
+    playbook: PlaybookOption = None,
+    inventory: InventoryOption = None,
+    play: PlayOption = 0,
+) -> None:
+    """Render the repository, and the one rebuilt from emit's YAML, and compare every host.
+
+    The rebuilt repository is the one a cluster renders: two renders identical on every
+    host say emit's YAML carries the repository. Each renders as lab does, with the
+    collections netadopt pins -- fetched into its own cache the first time -- and runs
+    what the repository's vars hold.
+    """
+    if playbook is None:
+        typer.echo("not compared: no playbook named -- pass --playbook", err=True)
+        raise typer.Exit(2)
+
+    found = resolve_ansible()
+    if not found.usable:
+        typer.echo(f'no Ansible: {found.problem} -- install as: uvx "netadopt[avd]" ...', err=True)
+        raise typer.Exit(1)
+    collections = _collections(found, "not compared")
+
+    # The objects emit writes, under a name that only tells them apart: what the
+    # Fabric is called changes nothing it renders.
+    config = read_ansible_cfg(repo)
+    source = _inventory_source(inventory, config)
+    var_files = read_vars(repo, source, playbook)
+    spelled = rfc1123(repo.resolve().name) or "fabric"
+    inputs = fabric_inputs(var_files, spelled)
+    adoption = _adopt(repo, playbook, source, play, spelled, config, var_files, inputs)
+
+    with tempfile.TemporaryDirectory(prefix="netadopt-") as work:
+        typer.echo(f"rendering play [{play}] of {playbook} with {RENDER_ROLE}", err=True)
+        repository_render = render(
+            found, repo, playbook, collections, Path(work) / "repository", play, inventory
+        )
+        if adoption.problem:
+            rebuilt_render = Rendered(problem=f"no Fabric: {adoption.problem}")
+        elif too_big := _too_big(adoption):
+            rebuilt_render = Rendered(problem="; ".join(too_big))
+        else:
+            typer.echo("rendering the repository rebuilt from emit's YAML", err=True)
+            rebuilt_render = render_rebuilt(
+                found,
+                adoption.documents + inputs.documents,
+                spelled,
+                collections,
+                Path(work) / "rebuilt",
+                _vault_path(repo, adoption),
+            )
+    result = (
+        compare(repository_render.hosts, rebuilt_render.hosts)
+        if repository_render.usable and rebuilt_render.usable
+        else None
+    )
+
+    console = _console()
+    console.print(Text(repo.resolve().name, style="bold"))
+    console.print()
+    rows = [
+        _ansible_row(found),
+        ("Repository", *_rendered_cells(repository_render)),
+        ("Rebuilt", *_rendered_cells(rebuilt_render)),
+        _compared_row(result),
+    ]
+    console.print(_grid(rows, label_style="bold"))
+    # The row holds a failure's first line; Ansible names a line per host after it.
+    for title, got in (
+        ("The repository", repository_render),
+        ("The rebuilt repository", rebuilt_render),
+    ):
+        lines = (got.problem or "").splitlines()[1:]
+        _print_section(console, f"{title} does not render", "red", [(line,) for line in lines])
+    if result is not None and not result.identical:
+        rows = [(host.name, _host_differs(host)) for host in result.hosts if not host.identical]
+        _print_section(console, "Differs", "red", rows)
+
+    raise typer.Exit(0 if result is not None and result.identical else 2)
+
+
+def _collections(found: Ansible, refusal: str) -> Path:
+    """The collections netadopt renders with, fetched the first time; exits without them."""
+    root = cache_root()
+    if not root.exists():
+        # The one slow run: four archives, and afterwards nothing reaches the network.
+        typer.echo(f"fetching arista.avd {AVD_TESTED} and its collections into {root}", err=True)
+    collections = ensure_collections(found)
+    for note in collections.notes:
+        typer.echo(note, err=True)
+    if not collections.usable:
+        typer.echo(f"{refusal}: {collections.problem}", err=True)
+        raise typer.Exit(2)
+    return collections.path
+
+
+def _too_big(adoption: Adoption) -> list[str]:
+    """Each ConfigMap the cluster would refuse for its size, said."""
+    return [
+        f"ConfigMap {doc['metadata']['name']} would hold {config_map_size(doc)} bytes, "
+        f"over the {CONFIG_MAP_MAX} a ConfigMap holds"
+        for doc in adoption.documents
+        if doc.get("kind") == CONFIG_MAP and config_map_size(doc) > CONFIG_MAP_MAX
+    ]
+
+
+def _rendered_cells(got: Rendered) -> tuple[str, str]:
+    if got.usable:
+        return ("rendered", _count(len(got.hosts), "host"))
+    return ("fails", (got.problem or "").splitlines()[0])
+
+
+def _compared_row(result: Comparison | None) -> tuple[str, ...]:
+    if result is None:
+        return ("Compared", "not measured", "a render failed")
+    verdict = "identical" if result.identical else "differs"
+    return ("Compared", verdict, f"{result.same} of {_count(len(result.hosts), 'host')} identical")
+
+
+def _host_differs(host: Host) -> str:
+    if host.only == REPOSITORY:
+        return "rendered from the repository only"
+    if host.only:
+        return "rendered from the rebuilt repository only"
+    return f"differs in {', '.join(host.differs)}"
 
 
 def _extra_vars(given: list[str]) -> tuple[dict, str | None]:
@@ -537,6 +668,8 @@ def _emit_notes(repo: Path, adoption: Adoption) -> list[str]:
             f"not carried: {piece.path}, named by {piece.setting} in ansible.cfg -- "
             "missing from the rebuilt repository"
         )
+    for where, call in adoption.lookups:
+        said.append(f"not carried: the file {call} reads, in {_place(where, repo)}")
     return said + list(adoption.pools.notes) + list(adoption.named.notes)
 
 
@@ -549,6 +682,15 @@ def _vault_secret_command(repo: Path, adoption: Adoption) -> str:
         f"kubectl create secret generic {vault_secret(adoption.name)} "
         f"--from-file={VAULT_SECRET_KEY}={shlex.quote(where)}"
     )
+
+
+def _vault_path(repo: Path, adoption: Adoption) -> Path | None:
+    """The vault password file ansible.cfg names, where it is."""
+    named = adoption.vault_file
+    if not named:
+        return None
+    # a relative path is relative to ansible.cfg, at the repository's root
+    return Path(named).expanduser() if named.startswith(("/", "~")) else repo / named
 
 
 def _inventory_source(given: str | None, config: AnsibleCfg) -> str | None:
@@ -581,6 +723,52 @@ def _beyond(adoption: Adoption | None) -> tuple[str, ...]:
     if adoption is None or adoption.play is None:
         return ()
     return beyond_role(adoption.play.raw, RENDER_ROLE)
+
+
+# A group or host name; a pattern such as FABRIC:!DC2 is Ansible's to resolve.
+_PLAIN_HOSTS = re.compile(r"[\w.-]+")
+# Ansible runs these with no inventory entry: its implicit localhost.
+_IMPLICIT_HOSTS = ("localhost", "127.0.0.1")
+
+
+def _play_hosts(adoption: Adoption, listed: Inventory) -> set[str] | None:
+    """The hosts the carried play names, or None when only Ansible can resolve them."""
+    hosts = adoption.play.hosts if adoption.play else None
+    if not listed.usable or not isinstance(hosts, str) or not _PLAIN_HOSTS.fullmatch(hosts):
+        return None
+    if hosts in listed.groups:
+        return set(listed.members(hosts))
+    return {hosts} if hosts in listed.hosts else None
+
+
+def _reaching_play(found: VarFiles, listed: Inventory, adoption: Adoption) -> VarFiles:
+    """The vars files that reach a host of the carried play -- every one when the play's
+    hosts are a pattern."""
+    targets = _play_hosts(adoption, listed)
+    if targets is None:
+        return found
+    kept = tuple(
+        file
+        for file in found.files
+        if (
+            targets & set(listed.members(file.scope))
+            if file.vars_dir == GROUP_VARS
+            else file.scope in targets
+        )
+    )
+    return replace(found, files=kept)
+
+
+def _unknown_hosts(adoption: Adoption | None, listed: Inventory) -> str | None:
+    """The carried play's hosts, when they name nothing the inventory holds."""
+    if adoption is None or adoption.play is None or not listed.usable:
+        return None
+    hosts = adoption.play.hosts
+    if not isinstance(hosts, str) or not _PLAIN_HOSTS.fullmatch(hosts):
+        return None
+    if hosts in listed.groups or hosts in listed.hosts or hosts in _IMPLICIT_HOSTS:
+        return None
+    return f"hosts '{hosts}' is no group or host of the inventory"
 
 
 # The report. Each part of the repository is a row of plain strings; rich lays them out.
@@ -688,13 +876,14 @@ def _name_refused(wanted: str) -> tuple[str, str] | None:
 def _renders_row(
     repo: Path, playbook: str | None, inventory: str | None, play: int = 0
 ) -> tuple[str, ...]:
-    """Whether the design renders on the AVD netadopt pins -- which this report never asks.
+    """Whether the objects carry what the repository renders -- which this report never asks.
 
     Rendering runs everything the vars hold and fetches AVD's collections on its first
-    use, so it belongs to `lab` and not to a report that is seconds and touches nothing.
-    The row is the command, so that a report is never read as the whole measurement.
+    use, so it belongs to `compare` and not to a report that is seconds and touches
+    nothing. The row is the command, so that a report is never read as the whole
+    measurement.
     """
-    command = f"netadopt avd lab {shlex.quote(str(repo))}"
+    command = f"netadopt avd compare {shlex.quote(str(repo))}"
     if playbook:
         command += f" --playbook {shlex.quote(playbook)}"
     if inventory:
@@ -748,6 +937,8 @@ def _not_carried(
     repo: Path,
     adoption: Adoption,
     found: VarFiles,
+    listed: Inventory,
+    removed: tuple[tuple[Path, str], ...],
     refused: tuple[str, str] | None = None,
 ) -> list[tuple[str, ...]]:
     rows: list[tuple[str, ...]] = []
@@ -764,9 +955,12 @@ def _not_carried(
         what = NO_ROLE if _no_role(other) else f"a separate run: --play {other.index} --name NAME"
         rows.append((_label(other), what))
 
-    if beyond := _beyond(adoption):
+    beyond, unknown = _beyond(adoption), _unknown_hosts(adoption, listed)
+    if beyond or unknown:
         role = RENDER_ROLE.rsplit(".", 1)[-1]
-        rows.append((f"play [{adoption.play.index}]", f"more than {role}: {', '.join(beyond)}"))
+        said = [f"more than {role}: {', '.join(beyond)}"] if beyond else []
+        said += [unknown] if unknown else []
+        rows.append((f"play [{adoption.play.index}]", "; ".join(said)))
 
     if adoption.vault_file:
         rows.append((adoption.vault_file, "the vault password; create its Secret:"))
@@ -775,8 +969,13 @@ def _not_carried(
         why = f"named by {piece.setting} in ansible.cfg; missing from the rebuilt repository"
         rows.append((piece.path, why))
 
+    for where, call in adoption.lookups:
+        rows.append((_place(where, repo), f"{call}: the file it reads is not carried"))
+
     for file in found.problems:
         rows.append((_relative(file.path, repo), file.problem or ""))
+    for path, said in removed:
+        rows.append((_relative(path, repo), said))
     for note in adoption.pools.notes:
         rows.append(("pool file", note))
     for note in adoption.named.notes:
@@ -800,9 +999,10 @@ def _warnings(
         if piece.setting is None:
             rows.append((piece.path, "an executable inventory, run whenever Ansible reads it"))
         else:
-            rows.append(
-                (piece.path, f"code Ansible loads, named by {piece.setting} in ansible.cfg")
-            )
+            why = f"code Ansible loads, named by {piece.setting} in ansible.cfg"
+            if piece.setting in COLLECTIONS_KEYS:
+                why += "; lab and the cluster render with the collections netadopt pins"
+            rows.append((piece.path, why))
 
     # Carried as written, and outranked where Ansible renders (render_env).
     callback = config.stdout_callback
@@ -840,6 +1040,11 @@ def _split(note: str) -> tuple[str, str]:
     """A note written as "<what>: <why>", as two cells."""
     what, colon, why = note.partition(": ")
     return (what, why) if colon else ("", note)
+
+
+def _place(where: Path | str, repo: Path) -> str:
+    """A vars file relative to the repository, or the place as said."""
+    return _relative(where, repo) if isinstance(where, Path) else where
 
 
 def _relative(path: Path, repo: Path) -> str:
