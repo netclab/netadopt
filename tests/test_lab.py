@@ -2,7 +2,30 @@
 
 from __future__ import annotations
 
-from netadopt.lab import BRIDGE, CEOS, LINUX, NONE, Ceos, netclab_values
+import yaml
+
+from netadopt.lab import (
+    ADDRESSES,
+    BRIDGE,
+    CEOS,
+    CEOS_ENV,
+    CLAB_BRIDGE,
+    CLAB_CEOS,
+    CLAB_LINUX,
+    LAB_LOCAL_USER,
+    LINUX,
+    LINUX_IMAGE,
+    MGMT_SUBNET,
+    NONE,
+    SERVICES,
+    Ceos,
+    Lab,
+    containerlab_topology,
+    lab_extra_vars,
+    netclab_values,
+    startup_config,
+    topology_yaml,
+)
 
 
 def cable(name: str, peer: str, peer_interface: str | None, peer_type: str = "spine") -> dict:
@@ -303,3 +326,175 @@ def test_ceos_settings_are_written_only_when_given():
     assert nodes(set_)["leaf"]["memory"] == "2Gi"
     assert nodes(set_)["leaf"]["cpu"] == "1000m"
     assert "memory" not in nodes(set_)["server1"]  # a linux node keeps the chart's defaults
+
+
+# The fabric of the containerlab tests: two switches and a server, cabled as AVD writes it.
+SPINE_LEAF = netclab_values(
+    {
+        "dc1-spine1": rendered(cable("Ethernet1", "dc1-leaf1a", "Ethernet1", "l3leaf")),
+        "dc1-leaf1a": rendered(
+            cable("Ethernet1", "dc1-spine1", "Ethernet1"),
+            cable("Ethernet5", "server1", "PCI1", "server"),
+        ),
+    }
+)
+
+
+def test_a_veth_network_is_a_link_between_its_two_ends():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos:4.36.1F")
+
+    assert clab.problem is None
+    assert clab.topology["topology"]["links"] == [
+        {"endpoints": ["dc1-leaf1a:eth1", "dc1-spine1:eth1"]},
+        {"endpoints": ["dc1-leaf1a:eth5", "server1:pci1"]},
+    ]
+
+
+def test_every_ceos_node_runs_the_image_given_and_the_charts_startup_config():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos:4.36.1F")
+
+    kinds = clab.topology["topology"]["kinds"]
+    assert kinds[CLAB_CEOS] == {
+        "image": "ceos:4.36.1F",
+        "startup-config": startup_config(),
+        "env": CEOS_ENV,
+    }
+    assert kinds[CLAB_LINUX] == {"image": LINUX_IMAGE}
+    assert {name: node["kind"] for name, node in clab.topology["topology"]["nodes"].items()} == {
+        "dc1-leaf1a": CLAB_CEOS,
+        "dc1-spine1": CLAB_CEOS,
+        "server1": CLAB_LINUX,
+    }
+
+
+def test_eth0_stays_the_containers_as_in_netclab():
+    # cEOS reads each as set when it is not empty, "0" included: MAPETH0="0" makes eth0
+    # Ethernet510 and takes its address. Empty is netclab-chart's: neither is set there.
+    assert CEOS_ENV == {"MGMT_INTF": "", "MAPETH0": ""}
+
+
+def test_the_startup_config_is_the_charts_user_and_eapi():
+    config = startup_config()
+
+    assert config.startswith("!\nusername arista privilege 15 secret 0 arista\n")
+    assert "management api http-commands\n  protocol https\n  no shutdown\n" in config
+    assert config.endswith("end\n")
+
+
+def test_no_linux_node_and_no_linux_kind():
+    clab = containerlab_topology(
+        netclab_values({"dc1-spine1": rendered(), "dc1-leaf1a": rendered()}), "dc1", "ceos"
+    )
+
+    assert set(clab.topology["topology"]["kinds"]) == {CLAB_CEOS}
+
+
+def test_every_node_takes_a_fixed_address_in_name_order_after_dockers():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos")
+
+    nodes_ = clab.topology["topology"]["nodes"]
+    assert [nodes_[name]["mgmt-ipv4"] for name in sorted(nodes_)] == [
+        "172.20.20.2",
+        "172.20.20.3",
+        "172.20.20.4",
+    ]
+    assert clab.topology["mgmt"] == {"network": "dc1", "ipv4-subnet": MGMT_SUBNET}
+    # The fabric's hosts only: the server is no host the extra vars push to.
+    assert clab.addresses == {"dc1-leaf1a": "172.20.20.2", "dc1-spine1": "172.20.20.3"}
+
+
+def test_the_network_and_subnet_given_are_the_labs():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos", "10.99.0.0/29", "kind")
+
+    assert clab.topology["mgmt"] == {"network": "kind", "ipv4-subnet": "10.99.0.0/29"}
+    assert clab.addresses == {"dc1-leaf1a": "10.99.0.2", "dc1-spine1": "10.99.0.3"}
+
+
+def test_a_subnet_too_small_for_every_node_is_a_problem():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos", "10.99.0.0/30")
+
+    assert clab.topology is None
+    assert clab.problem == "3 nodes, and 10.99.0.0/30 holds fewer"
+
+
+def test_a_subnet_that_is_not_one_is_a_problem():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos", "10.99.0.1/24")
+
+    assert clab.topology is None
+    assert clab.problem.startswith("--mgmt-subnet 10.99.0.1/24: ")
+
+
+# Three switches on one segment: a bridge in netclab.
+SEGMENT = netclab_values(
+    {
+        "sw1": rendered(
+            cable("Ethernet1", "sw2", "Ethernet1"), cable("Ethernet1", "sw3", "Ethernet1")
+        ),
+        "sw2": rendered(),
+        "sw3": rendered(),
+    }
+)
+
+
+def test_a_bridge_is_containerlabs_bridge_inside_a_node_of_the_networks_name():
+    assert SEGMENT.values["topology"]["networks"] == [{"name": "n1", "type": BRIDGE}]
+
+    clab = containerlab_topology(SEGMENT, "seg", "ceos")
+
+    nodes_ = clab.topology["topology"]["nodes"]
+    assert nodes_["n1"]["kind"] == CLAB_LINUX
+    assert nodes_["n1|n1"] == {"kind": CLAB_BRIDGE, "network-mode": "container:n1"}
+    assert "mgmt-ipv4" not in nodes_["n1|n1"]  # no container of its own
+    assert clab.topology["topology"]["links"] == [
+        {"endpoints": ["sw1:eth1", "n1|n1:p1"]},
+        {"endpoints": ["sw2:eth1", "n1|n1:p2"]},
+        {"endpoints": ["sw3:eth1", "n1|n1:p3"]},
+    ]
+
+
+def test_a_node_named_as_a_bridge_network_is_a_problem():
+    taken = Lab(
+        values={
+            "topology": {
+                "networks": [{"name": "n1", "type": BRIDGE}],
+                "nodes": [{"name": "n1", "type": CEOS, "interfaces": []}],
+            }
+        }
+    )
+
+    assert containerlab_topology(taken, "x", "ceos").problem == (
+        "node n1 and network n1 share a name"
+    )
+
+
+def test_the_topology_file_keeps_the_config_as_a_block_and_a_link_on_one_line():
+    clab = containerlab_topology(SPINE_LEAF, "dc1", "ceos")
+
+    text = topology_yaml(clab.topology)
+
+    assert yaml.safe_load(text) == clab.topology
+    assert "      startup-config: |\n        !\n        username arista" in text
+    assert "  - endpoints: ['dc1-leaf1a:eth1', 'dc1-spine1:eth1']\n" in text
+
+
+def test_the_extra_vars_point_each_host_at_its_address_under_the_key_given():
+    made = lab_extra_vars({"dc1-leaf1a": "172.20.20.2"}, {}, ADDRESSES)
+
+    assert made[ADDRESSES] == {"dc1-leaf1a": "172.20.20.2"}
+    assert made["ansible_host"].startswith("{{ lab_addresses[inventory_hostname] | mandatory(")
+    assert SERVICES not in made
+
+
+def test_the_twins_aaa_is_the_lab_user_alone_with_the_designs_radius_kept():
+    radius = {"LEAF1A": {"servers": [{"host": "agni.arista.com"}]}}
+
+    made = lab_extra_vars({"LEAF1A": "leaf1a.dc1.svc"}, radius)
+
+    assert (made["ansible_user"], made["ansible_password"]) == ("arista", "arista")
+    assert made["lab_local_user"] == LAB_LOCAL_USER
+    assert made["lab_radius"] == radius
+    assert made["aaa_settings"] == (
+        "{{ {'local_users': [lab_local_user]}"
+        " | combine({'radius': lab_radius[inventory_hostname]}"
+        " if inventory_hostname in lab_radius else {}) }}"
+    )

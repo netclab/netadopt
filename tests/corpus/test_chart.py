@@ -20,7 +20,7 @@ import subprocess
 
 import yaml
 
-from netadopt.lab import Lab
+from netadopt.lab import Lab, startup_config
 
 POD = "Pod"
 SERVICE = "Service"
@@ -61,6 +61,11 @@ def test_every_network_a_pod_asks_for_is_one_the_chart_made(lab: Lab, templated)
         # otherwise a lab whose Pods ask for nothing passes this in silence
         assert asked, "the values hold networks and no Pod asks for one"
     assert asked <= made, sorted(asked - made)
+
+
+def test_containerlabs_ceos_nodes_start_from_the_charts_config(chart_startup_config: str):
+    """netadopt carries its own copy for containerlab: the two labs' nodes start alike."""
+    assert startup_config() == chart_startup_config
 
 
 def _documents(templated: subprocess.CompletedProcess) -> list[dict]:

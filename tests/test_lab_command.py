@@ -37,6 +37,14 @@ sys.stderr.write(plan.get("stderr", ""))
 sys.exit(plan.get("exit", 0))
 """
 
+# ansible-inventory --list: the plan's `listed`, else a fabric with no vars.
+INVENTORY_STUB = """\
+import json, pathlib
+here = pathlib.Path(__file__).parent
+plan = json.loads((here / "plan.json").read_text())
+print(json.dumps(plan.get("listed", {"_meta": {"hostvars": {}}})))
+"""
+
 BUILD = """
 - name: Build
   hosts: FABRIC
@@ -86,6 +94,9 @@ def ansible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     exe = bin_dir / "ansible-playbook"
     exe.write_text(f"#!{sys.executable}\n{STUB}")  # before sys.executable is replaced
     exe.chmod(0o755)
+    inventory = bin_dir / "ansible-inventory"
+    inventory.write_text(f"#!{sys.executable}\n{INVENTORY_STUB}")
+    inventory.chmod(0o755)
     monkeypatch.setattr(sys, "executable", str(bin_dir / "python"))
     plan(bin_dir, hosts=FABRIC)
     return bin_dir
@@ -206,10 +217,10 @@ def test_a_cache_that_is_there_says_nothing(repo, ansible, collections):
 
 
 def test_a_target_that_is_not_built_is_refused_before_anything_runs(repo, ansible, collections):
-    result = lab(repo, "--playbook", "build.yml", "--for", "containerlab")
+    result = lab(repo, "--playbook", "build.yml", "--for", "gns3")
 
     assert result.exit_code == 2
-    assert result.stderr.strip() == "no lab: --for containerlab is not built -- netclab"
+    assert result.stderr.strip() == "no lab: --for gns3 is not built -- netclab, containerlab"
     assert result.stdout == ""
     assert not (ansible / "call.json").exists()
 
@@ -301,3 +312,96 @@ def test_extra_vars_without_a_namespace_render_nothing(repo, ansible, collection
     assert result.exit_code == 2
     assert "no lab: --extra-vars-out needs --namespace" in result.stderr
     assert not (ansible / "call.json").exists()
+
+
+def clab(repo: Path, *args: str):
+    return lab(
+        repo, "--playbook", "build.yml", "--for", "containerlab", "--ceos-image", "ceos", *args
+    )
+
+
+def test_containerlab_writes_a_topology_named_for_the_repository_to_stdout(
+    repo, ansible, collections
+):
+    result = clab(repo)
+
+    assert result.exit_code == 0, result.stderr
+    topology = yaml.safe_load(result.stdout)
+    assert topology["name"] == "single-dc-l3ls"
+    assert topology["mgmt"] == {"network": "single-dc-l3ls", "ipv4-subnet": "172.20.20.0/24"}
+    assert topology["topology"]["kinds"]["arista_ceos"]["image"] == "ceos"
+    assert topology["topology"]["nodes"]["dc1-spine1"] == {
+        "kind": "arista_ceos",
+        "mgmt-ipv4": "172.20.20.3",
+    }
+    assert {"endpoints": ["dc1-leaf1a:eth1", "dc1-spine1:eth1"]} in topology["topology"]["links"]
+    assert "rendered 2 hosts" in result.stderr
+
+
+def test_the_management_network_and_subnet_given_are_the_labs(repo, ansible, collections):
+    result = clab(repo, "--mgmt-network", "kind", "--mgmt-subnet", "10.99.0.0/24")
+
+    assert result.exit_code == 0, result.stderr
+    assert yaml.safe_load(result.stdout)["mgmt"] == {
+        "network": "kind",
+        "ipv4-subnet": "10.99.0.0/24",
+    }
+
+
+def test_containerlab_without_a_ceos_image_is_refused(repo, ansible, collections):
+    result = lab(repo, "--playbook", "build.yml", "--for", "containerlab")
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() == "no lab: --for containerlab needs --ceos-image"
+    assert not (ansible / "call.json").exists()
+
+
+def test_netclabs_own_options_are_refused_for_containerlab(repo, ansible, collections):
+    result = clab(repo, "--ceos-memory", "2Gi", "--namespace", "dc1")
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() == (
+        "no lab: --ceos-memory, --namespace: netclab's, not containerlab's"
+    )
+    assert not (ansible / "call.json").exists()
+
+
+def test_containerlabs_own_options_are_refused_for_netclab(repo, ansible, collections):
+    result = lab(repo, "--playbook", "build.yml", "--mgmt-subnet", "10.99.0.0/24")
+
+    assert result.exit_code == 2
+    assert "are containerlab's, not netclab's" in result.stderr
+    assert not (ansible / "call.json").exists()
+
+
+def test_containerlabs_extra_vars_name_each_hosts_address_and_need_no_namespace(
+    repo, ansible, collections, tmp_path
+):
+    out = tmp_path / "lab-vars.yml"
+
+    result = clab(repo, "--extra-vars-out", str(out))
+
+    assert result.exit_code == 0, result.stderr
+    written = yaml.safe_load(out.read_text())
+    assert written["lab_addresses"] == {"dc1-leaf1a": "172.20.20.2", "dc1-spine1": "172.20.20.3"}
+    assert "lab_addresses[inventory_hostname]" in written["ansible_host"]
+    assert (written["ansible_user"], written["ansible_password"]) == ("arista", "arista")
+
+
+def test_the_extra_vars_keep_the_designs_radius_on_the_hosts_that_have_it(
+    repo, ansible, collections, tmp_path
+):
+    radius = {"servers": [{"host": "agni.arista.com", "cleartext_key": "key"}]}
+    hostvars = {"dc1-leaf1a": {"aaa_settings": {"radius": radius}}, "dc1-spine1": {}}
+    plan(ansible, hosts=FABRIC, listed={"_meta": {"hostvars": hostvars}})
+    out = tmp_path / "lab-vars.yml"
+
+    result = lab(
+        repo, "--playbook", "build.yml", "--namespace", "dc1", "--extra-vars-out", str(out)
+    )
+
+    assert result.exit_code == 0, result.stderr
+    written = yaml.safe_load(out.read_text())
+    assert written["lab_radius"] == {"dc1-leaf1a": radius}
+    assert written["lab_local_user"]["name"] == "arista"
+    assert written["aaa_settings"].startswith("{{ {'local_users': [lab_local_user]}")

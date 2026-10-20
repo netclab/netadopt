@@ -301,6 +301,34 @@ def chart() -> tuple[str, Path]:
     return helm, root
 
 
+# The ConfigMap every cEOS node of netclab-chart starts from.
+CHART_STARTUP_CONFIG = "templates/ceos/ceos-startup-config.yaml"
+
+
+@pytest.fixture(scope="session")
+def chart_startup_config(chart: tuple[str, Path]) -> str:
+    """The startup-config netclab-chart renders for a cEOS node, as the node reads it."""
+    helm, root = chart
+    done = subprocess.run(
+        [
+            helm,
+            "template",
+            HELM_RELEASE,
+            str(root),
+            "--api-versions",
+            HELM_API_VERSIONS,
+            "--show-only",
+            CHART_STARTUP_CONFIG,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=HELM_TIMEOUT,
+    )
+    assert done.returncode == 0, (done.stderr or done.stdout).strip()
+    return yaml.safe_load(done.stdout)["data"]["startup-config"]
+
+
 @pytest.fixture(scope="session")
 def _templates() -> dict[Path, subprocess.CompletedProcess]:
     """One helm run per repository, as the render is kept per repository."""

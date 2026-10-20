@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from netadopt.lab import BRIDGE, Lab
+from netadopt.lab import BRIDGE, Lab, containerlab_topology
 from netadopt.render import Rendered
 from netadopt.xr import LABEL_MAX, rfc1123
 
@@ -87,6 +87,32 @@ def test_every_cable_is_an_interface_of_its_node_or_is_named(rendered: Rendered,
             assert f"eth{spelled.group(1)}" in ends or _not_cabled(lab.notes, host, name), (
                 f"{host} {name}"
             )
+
+
+# Wide enough for the corpus's largest play, five hundred nodes.
+CORPUS_SUBNET = "10.0.0.0/16"
+
+
+def test_the_containerlab_topology_cables_every_end_the_values_do(lab: Lab):
+    clab = containerlab_topology(lab, "corpus", "ceos", CORPUS_SUBNET)
+
+    assert clab.problem is None, clab.problem
+    nodes = clab.topology["topology"]["nodes"]
+    joined = [
+        tuple(end.split(":", 1))
+        for link in clab.topology["topology"]["links"]
+        for end in link["endpoints"]
+    ]
+    assert all(node in nodes for node, _ in joined)
+    cabled = {
+        (node["name"], interface["name"])
+        for node in lab.values["topology"]["nodes"]
+        for interface in node["interfaces"]
+    }
+    # A bridge's own ports are containerlab's, not a node's.
+    assert {end for end in joined if "|" not in end[0]} == cabled
+    addresses = [node["mgmt-ipv4"] for node in nodes.values() if "mgmt-ipv4" in node]
+    assert len(addresses) == len(set(addresses))
 
 
 def _nodes(lab: Lab) -> dict[str, dict]:

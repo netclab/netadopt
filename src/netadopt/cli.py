@@ -10,6 +10,7 @@ import re
 import shlex
 import tempfile
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from importlib.metadata import version
 from pathlib import Path
@@ -33,12 +34,18 @@ from netadopt.galaxy import cache_root, ensure_collections
 from netadopt.inventory import Inventory, read_inventory
 from netadopt.inventoryfile import read_inventory_file
 from netadopt.lab import (
+    ADDRESSES,
     CONNECTED_TYPES,
+    CONTAINERLAB,
     LINUX,
+    MGMT_SUBNET,
     NETCLAB,
+    SERVICES,
     Ceos,
+    containerlab_topology,
     lab_extra_vars,
     netclab_values,
+    topology_yaml,
     values_yaml,
 )
 from netadopt.playbook import (
@@ -121,9 +128,8 @@ ExtraVarsOption = Annotated[
     typer.Option("--extra-vars", "-e", metavar="@FILE", help="extra vars, as -e @file"),
 ]
 
-# What a lab is written for. netclab-chart is built; containerlab is the second emitter
-# and is not offered before it exists.
-LAB_TARGETS = (NETCLAB,)
+# What a lab is written for: netclab-chart, or containerlab.
+LAB_TARGETS = (NETCLAB, CONTAINERLAB)
 ForOption = Annotated[str, typer.Option("--for", metavar="TARGET", help="what the lab is for")]
 ConnectedOption = Annotated[
     str, typer.Option(metavar="TYPE", help="the node a peer outside the fabric becomes")
@@ -135,6 +141,14 @@ CeosCpuOption = Annotated[str | None, typer.Option(help="the CPU every cEOS node
 # The namespace the chart is installed into: a node's Service is only reachable by it.
 NamespaceOption = Annotated[
     str | None, typer.Option(help="the namespace the lab is installed into")
+]
+# containerlab's management network, and the subnet every node takes a fixed address in.
+MgmtNetworkOption = Annotated[
+    str | None,
+    typer.Option(metavar="NAME", help="containerlab's management network; default the lab's name"),
+]
+MgmtSubnetOption = Annotated[
+    str | None, typer.Option(metavar="CIDR", help=f"its subnet; default {MGMT_SUBNET}")
 ]
 ExtraVarsOutOption = Annotated[
     Path | None,
@@ -407,32 +421,36 @@ def lab(
     ceos_memory: CeosMemoryOption = None,
     ceos_cpu: CeosCpuOption = None,
     namespace: NamespaceOption = None,
+    mgmt_network: MgmtNetworkOption = None,
+    mgmt_subnet: MgmtSubnetOption = None,
     extra_vars_out: ExtraVarsOutOption = None,
 ) -> None:
     """Write the lab topology of the repository's fabric: cabled nodes, no configuration.
 
-    The values go to stdout and everything else to stderr, so the stream pipes into
-    `helm install ... --values -` whether or not there was something to say.
+    netclab-chart's values by default, or with `--for containerlab` a topology for
+    `containerlab deploy`. It goes to stdout and everything else to stderr, so the stream
+    pipes into `helm install ... --values -` or a `.clab.yml` whether or not there was
+    something to say.
 
     AVD renders the cabling, on a copy of the repository, with the collections netadopt
     pins -- fetched into its own cache the first time and never again.
 
     With --extra-vars-out, the file `emit -e` reads to push to the lab's devices.
     """
-    if extra_vars_out is not None and namespace is None:
-        # without it, every address would name a Service in no namespace the lab is in
-        typer.echo("no lab: --extra-vars-out needs --namespace", err=True)
-        raise typer.Exit(2)
-    if for_ not in LAB_TARGETS:
-        typer.echo(f"no lab: --for {for_} is not built -- {', '.join(LAB_TARGETS)}", err=True)
-        raise typer.Exit(2)
-    if connected not in CONNECTED_TYPES:
-        typer.echo(
-            f"no lab: --connected {connected} is not one of {', '.join(CONNECTED_TYPES)}", err=True
-        )
-        raise typer.Exit(2)
-    if playbook is None:
-        typer.echo("no lab: no playbook named -- pass --playbook", err=True)
+    refused = _lab_refused(
+        for_,
+        connected,
+        playbook,
+        ceos_image,
+        ceos_memory,
+        ceos_cpu,
+        namespace,
+        mgmt_network,
+        mgmt_subnet,
+        extra_vars_out,
+    )
+    if refused:
+        typer.echo(f"no lab: {refused}", err=True)
         raise typer.Exit(2)
 
     found = resolve_ansible()
@@ -445,7 +463,7 @@ def lab(
     with tempfile.TemporaryDirectory(prefix="netadopt-") as work:
         # The structured configurations are read before the copy goes; nothing else is kept.
         rendered = render(
-            found, repo, playbook, collections, Path(work) / "render", play, inventory
+            found, repo, playbook or "", collections, Path(work) / "render", play, inventory
         )
     if not rendered.usable:
         typer.echo(f"no lab: {rendered.problem}", err=True)
@@ -453,7 +471,7 @@ def lab(
     typer.echo(f"rendered {_count(len(rendered.hosts), 'host')}", err=True)
     # Another play is another fabric over the same hosts -- twodc's second one is a
     # digital twin -- and a lab of one of them must not read as the lab of the repository.
-    read = read_playbook(repo, playbook)
+    read = read_playbook(repo, playbook or "")
     for other in read.plays if read.usable else ():
         if other.index != play:
             what = NO_ROLE if _no_role(other) else f"render it with --play {other.index}"
@@ -467,8 +485,26 @@ def lab(
     if built.problem:
         typer.echo(f"no lab: {built.problem}", err=True)
         raise typer.Exit(2)
-    if extra_vars_out is not None and namespace is not None:
-        text = ansible_yaml.dump(lab_extra_vars(built.hosts, namespace))
+
+    if for_ == CONTAINERLAB:
+        clab = containerlab_topology(
+            built,
+            rfc1123(repo.resolve().name) or "lab",
+            ceos_image or "",
+            mgmt_subnet or MGMT_SUBNET,
+            mgmt_network,
+        )
+        if clab.problem:
+            typer.echo(f"no lab: {clab.problem}", err=True)
+            raise typer.Exit(2)
+        addresses, key, out = dict(clab.addresses), ADDRESSES, topology_yaml(clab.topology or {})
+    else:
+        addresses = {host: f"{node}.{namespace}.svc" for host, node in built.hosts.items()}
+        key, out = SERVICES, values_yaml(built.values or {})
+
+    if extra_vars_out is not None:
+        radius = _radius(read_inventory(found, repo, inventory), built.hosts)
+        text = ansible_yaml.dump(lab_extra_vars(addresses, radius, key))
         try:
             extra_vars_out.write_text(text, encoding="utf-8")
         except OSError as err:
@@ -478,11 +514,61 @@ def lab(
             f"extra vars for {_count(len(built.hosts), 'host')} in {extra_vars_out}", err=True
         )
 
-    # What the values hold, which is not what the render wrote: a peer outside the
+    # What the lab holds, which is not what the render wrote: a peer outside the
     # fabric is a node too, and AVD rendered no structured configuration for it.
-    typer.echo(_lab_summary(built.values), err=True)
-    typer.echo(values_yaml(built.values), nl=False)
+    typer.echo(_lab_summary(built.values or {}), err=True)
+    typer.echo(out, nl=False)
     raise typer.Exit(0)
+
+
+def _lab_refused(
+    for_: str,
+    connected: str,
+    playbook: str | None,
+    ceos_image: str | None,
+    ceos_memory: str | None,
+    ceos_cpu: str | None,
+    namespace: str | None,
+    mgmt_network: str | None,
+    mgmt_subnet: str | None,
+    extra_vars_out: Path | None,
+) -> str | None:
+    """Why the options make no lab, said before anything renders."""
+    if for_ not in LAB_TARGETS:
+        return f"--for {for_} is not built -- {', '.join(LAB_TARGETS)}"
+    if connected not in CONNECTED_TYPES:
+        return f"--connected {connected} is not one of {', '.join(CONNECTED_TYPES)}"
+    if playbook is None:
+        return "no playbook named -- pass --playbook"
+    if for_ == CONTAINERLAB:
+        if ceos_image is None:
+            # cEOS cannot be pulled, and containerlab has no image to fall back on
+            return "--for containerlab needs --ceos-image"
+        netclab_only = {
+            "--ceos-memory": ceos_memory,
+            "--ceos-cpu": ceos_cpu,
+            "--namespace": namespace,
+        }
+        given = [option for option, value in netclab_only.items() if value is not None]
+        if given:
+            return f"{', '.join(given)}: netclab's, not containerlab's"
+        return None
+    if mgmt_network is not None or mgmt_subnet is not None:
+        return "--mgmt-network and --mgmt-subnet are containerlab's, not netclab's"
+    if extra_vars_out is not None and namespace is None:
+        # without it, every address would name a Service in no namespace the lab is in
+        return "--extra-vars-out needs --namespace"
+    return None
+
+
+def _radius(listed: Inventory, hosts: Mapping[str, str]) -> dict[str, object]:
+    """Each lab host's aaa_settings.radius, as Ansible merges the repository's vars."""
+    found: dict[str, object] = {}
+    for host in hosts:
+        settings = listed.hostvars.get(host, {}).get("aaa_settings")
+        if isinstance(settings, dict) and settings.get("radius"):
+            found[host] = settings["radius"]
+    return found
 
 
 @avd.command(name="compare")

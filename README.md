@@ -32,7 +32,7 @@ already installed elsewhere on the machine is not used.
 | `netadopt avd report` | What is in the repository, and what of it cannot be carried? | no - seconds |
 | `netadopt avd emit` | The YAML for Kubernetes: one `Fabric`, a `FabricInput` per group or host | no - seconds |
 | `netadopt avd compare` | Does emit's YAML carry the repository? Every host, compared | twice |
-| `netadopt avd lab` | A lab of the fabric's switches, cabled as AVD cables them | once |
+| `netadopt avd lab` | A lab of the fabric's switches, cabled as AVD cables them: netclab-chart or containerlab | once |
 
 Each takes the repository's directory and the playbook it is built with. `report` also
 runs without a playbook, and names the files that read as one.
@@ -225,8 +225,63 @@ Node names are the repository's hostnames, lowercased for Kubernetes. A host no 
 can be spelled from is left out with its cables and said on stderr; two hosts that
 would share a name stop the lab rather than one of them being guessed at.
 
+With `--for containerlab`, a topology for [containerlab](https://containerlab.dev)
+instead, cabled alike:
+
+```
+$ netadopt avd lab single-dc-l3ls --playbook build.yml --for containerlab --ceos-image ceos:4.36.1F > single-dc-l3ls.clab.yml
+$ sudo containerlab deploy -t single-dc-l3ls.clab.yml
+```
+
+```yaml
+name: single-dc-l3ls
+mgmt:
+  network: single-dc-l3ls
+  ipv4-subnet: 172.20.20.0/24
+topology:
+  kinds:
+    arista_ceos:
+      image: ceos:4.36.1F
+      startup-config: |
+        !
+        username arista privilege 15 secret 0 arista
+        # ...
+    linux:
+      image: bash:5.3.20
+  nodes:
+    dc1-leaf1-server1:
+      kind: linux
+      mgmt-ipv4: 172.20.20.2
+    dc1-leaf1a:
+      kind: arista_ceos
+      mgmt-ipv4: 172.20.20.3
+    # ...
+  links:
+  - endpoints: ['dc1-leaf1-server1:ilo', 'dc1-leaf1c:eth5']
+  # ...
+```
+
+`--ceos-image` is required: cEOS cannot be pulled. `--ceos-memory`, `--ceos-cpu` and
+`--namespace` are netclab's, and refused here. Every cEOS node starts from
+netclab-chart's own startup-config - the user `arista`, eAPI over HTTPS, and a control
+plane that lets the fabric's protocols in - so the two labs' nodes start alike. As in
+netclab, EOS leaves `eth0` to the container, so a push replacing the configuration
+keeps the node's management address. A
+`.clab.yml` is containerlab's own name for a topology, and the one
+[vscode-containerlab](https://marketplace.visualstudio.com/items?itemName=srl-labs.vscode-containerlab)
+finds a lab by.
+
+Every node has a fixed management address, in name order, in containerlab's default
+subnet; `--mgmt-subnet` and `--mgmt-network` choose others. A subnet another Docker
+network already holds stops `containerlab deploy`, naming that network: give a free
+one. A network of more than two ends is containerlab's bridge inside a node of the
+network's own name, so nothing has to exist on the host first. containerlab itself adds
+the nodes to `/etc/hosts` and to the SSH configuration, and `containerlab destroy`
+takes them out.
+
 To push the fabric's configuration to the lab rather than to the real devices, `lab`
-also writes the extra vars that point each host at its node:
+also writes the extra vars that point each host at its node - a Service in netclab,
+the node's address in containerlab:
 
 ```
 $ netadopt avd lab single-dc-l3ls --playbook build.yml --namespace dc1 --extra-vars-out lab-vars.yml > values.yaml
@@ -235,7 +290,7 @@ $ netadopt avd emit single-dc-l3ls --playbook build.yml -e @lab-vars.yml > singl
 ```
 
 ```yaml
-lab_services:
+lab_services:            # lab_addresses in containerlab: dc1-leaf1a: 172.20.20.3
   dc1-leaf1a: dc1-leaf1a.dc1.svc
   # ...
 ansible_host: '{{ lab_services[inventory_hostname] | mandatory(inventory_hostname ~ '' has no node in the lab'') }}'
@@ -244,12 +299,25 @@ management_eapi:
   vrfs:
   - name: default
     enabled: true
+ansible_user: arista
+ansible_password: arista
+lab_local_user:
+  name: arista
+  # ...
+lab_radius: {}
+aaa_settings: '{{ {''local_users'': [lab_local_user]} | combine({''radius'': lab_radius[inventory_hostname]} if inventory_hostname in lab_radius else {}) }}'
 ```
 
-The namespace is the one the chart is installed into, and `--extra-vars-out` refuses to
-run without it. A host with no node in the lab stops with its name, never reaching an
-address that is not its own. eAPI moves to the default VRF, because a cEOS pod has no
-management interface for the design's own.
+In netclab the namespace is the one the chart is installed into, and `--extra-vars-out`
+refuses to run without it. A host with no node in the lab stops with its name, never
+reaching an address that is not its own. eAPI moves to the default VRF, because a cEOS
+node has no management interface for the design's own.
+
+The lab's AAA is the lab's own, whatever the design's: the push logs in as `arista`,
+and `aaa_settings` becomes that one local user, so that no TACACS+ or RADIUS server the
+lab cannot reach stands between a push and a switch, and the user is still there after
+a push replaces the configuration. A host whose design has RADIUS keeps it, because
+802.1X does not render without a server.
 
 Exit codes are `report`'s: `0`, or `2` when there is no lab, or `1` without the `avd`
 extra.
@@ -314,7 +382,6 @@ or be named as left out.
 
 ## Where this is going
 
-- `lab --for containerlab`, beside netclab-chart.
 - A second ecosystem after AVD, under a subcommand of its own, with its model kept as
   its vendor writes it.
 
