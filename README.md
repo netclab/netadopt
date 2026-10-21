@@ -170,7 +170,7 @@ or emit's YAML cannot be written; `1` without the `avd` extra.
 `lab` writes a lab topology of the same fabric: the cabling, as nodes and networks.
 
 ```
-$ netadopt avd lab single-dc-l3ls --playbook build.yml > values.yaml
+$ netadopt avd lab single-dc-l3ls --playbook build.yml --ceos-image ceos:4.36.1F > values.yaml
 rendering play [0] of build.yml with arista.avd.eos_designs
 rendered 8 hosts
 10 nodes (8 ceos, 2 linux), 22 networks
@@ -196,6 +196,7 @@ topology:
       network: n3
   - name: dc1-leaf1a
     type: ceos
+    image: ceos:4.36.1F
     interfaces:
     - name: eth1
       network: n4
@@ -206,7 +207,7 @@ topology:
 helm install lab netclab/netclab --values values.yaml
 ```
 
-The nodes are cabled and empty: no configuration is loaded into them. The cabling is
+The nodes are cabled and carry none of the fabric's configuration. The cabling is
 AVD's, so netadopt renders the repository with AVD to get it - on a copy, never in the
 repository, and with the collections it pins, fetched into its own cache the first time
 and never again.
@@ -217,7 +218,8 @@ instead prints what AVD refused, host by host. Whether emit's YAML carries it is
 `compare`'s question, not `lab`'s.
 
 A peer outside the fabric - a server, a firewall - becomes the node `--connected`
-says: `linux` by default, or `ceos`, or `none` to leave it out. `--ceos-image`,
+says: `linux` by default, or `ceos`, or `none` to leave it out. `--ceos-image` is
+required: cEOS cannot be pulled, so import the image downloaded from Arista and name it.
 `--ceos-memory` and `--ceos-cpu` are written only when given, so the chart's own
 defaults hold otherwise.
 
@@ -261,13 +263,12 @@ topology:
   # ...
 ```
 
-`--ceos-image` is required: cEOS cannot be pulled. `--ceos-memory`, `--ceos-cpu` and
-`--namespace` are netclab's, and refused here. Every cEOS node starts from
-netclab-chart's own startup-config - the user `arista`, eAPI over HTTPS, and a control
-plane that lets the fabric's protocols in - so the two labs' nodes start alike. As in
-netclab, EOS leaves `eth0` to the container, so a push replacing the configuration
-keeps the node's management address. A
-`.clab.yml` is containerlab's own name for a topology, and the one
+`--ceos-memory`, `--ceos-cpu` and `--namespace` are netclab's, and refused here. Every
+cEOS node starts from netclab-chart's own startup-config - the user `arista`, eAPI over
+HTTPS, and a control plane that lets the fabric's protocols in - so the two labs' nodes
+start alike. As in netclab, EOS leaves `eth0` to the container, so a push replacing the
+configuration keeps the node's management address. A `.clab.yml` is containerlab's own
+name for a topology, and the one
 [vscode-containerlab](https://marketplace.visualstudio.com/items?itemName=srl-labs.vscode-containerlab)
 finds a lab by.
 
@@ -284,7 +285,7 @@ also writes the extra vars that point each host at its node - a Service in netcl
 the node's address in containerlab:
 
 ```
-$ netadopt avd lab single-dc-l3ls --playbook build.yml --namespace dc1 --extra-vars-out lab-vars.yml > values.yaml
+$ netadopt avd lab single-dc-l3ls --playbook build.yml --ceos-image ceos:4.36.1F --namespace dc1 --extra-vars-out lab-vars.yml > values.yaml
 $ helm install lab netclab/netclab --namespace dc1 --values values.yaml
 $ netadopt avd emit single-dc-l3ls --playbook build.yml -e @lab-vars.yml > single-dc-l3ls.yaml
 ```

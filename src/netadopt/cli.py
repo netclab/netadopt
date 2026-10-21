@@ -540,10 +540,11 @@ def _lab_refused(
         return f"--connected {connected} is not one of {', '.join(CONNECTED_TYPES)}"
     if playbook is None:
         return "no playbook named -- pass --playbook"
+    if ceos_image is None:
+        # cEOS cannot be pulled, and neither netclab-chart nor containerlab has an image
+        # to fall back on: every fabric host is a cEOS node
+        return "no cEOS image named -- pass --ceos-image"
     if for_ == CONTAINERLAB:
-        if ceos_image is None:
-            # cEOS cannot be pulled, and containerlab has no image to fall back on
-            return "--for containerlab needs --ceos-image"
         netclab_only = {
             "--ceos-memory": ceos_memory,
             "--ceos-cpu": ceos_cpu,

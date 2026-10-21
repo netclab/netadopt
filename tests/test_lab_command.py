@@ -129,8 +129,16 @@ def call(ansible: Path) -> list[str]:
     return json.loads((ansible / "call.json").read_text())
 
 
-def lab(repo: Path, *args: str):
+# cEOS cannot be pulled, so every lab names its image.
+IMAGE = "ceos"
+
+
+def invoke(repo: Path, *args: str):
     return CliRunner().invoke(app, ["avd", "lab", str(repo), *args])
+
+
+def lab(repo: Path, *args: str):
+    return invoke(repo, "--ceos-image", IMAGE, *args)
 
 
 def nodes(stdout: str) -> list[dict]:
@@ -184,14 +192,14 @@ def test_what_the_lab_leaves_out_is_said_on_stderr(repo, ansible, collections):
     assert [node["name"] for node in nodes(result.stdout)] == ["dc1-leaf1a", "dc1-spine1"]
 
 
-def test_the_ceos_values_are_written_only_when_given(repo, ansible, collections):
+def test_the_ceos_memory_and_cpu_are_written_only_when_given(repo, ansible, collections):
     plain = nodes(lab(repo, "--playbook", "build.yml").stdout)[0]
-    assert set(plain) == {"name", "type", "interfaces"}
+    assert set(plain) == {"name", "type", "image", "interfaces"}
+    assert plain["image"] == IMAGE
 
-    given = lab(repo, "--playbook", "build.yml", "--ceos-image", "ceos:4.34.0F", "--ceos-cpu", "2")
-    node = nodes(given.stdout)[0]
-    assert (node["image"], node["cpu"]) == ("ceos:4.34.0F", "2")
-    assert "memory" not in node
+    given = nodes(lab(repo, "--playbook", "build.yml", "--ceos-cpu", "2").stdout)[0]
+    assert given["cpu"] == "2"
+    assert "memory" not in given
 
 
 def test_the_play_and_the_inventory_reach_the_render(repo, ansible, collections):
@@ -315,9 +323,7 @@ def test_extra_vars_without_a_namespace_render_nothing(repo, ansible, collection
 
 
 def clab(repo: Path, *args: str):
-    return lab(
-        repo, "--playbook", "build.yml", "--for", "containerlab", "--ceos-image", "ceos", *args
-    )
+    return lab(repo, "--playbook", "build.yml", "--for", "containerlab", *args)
 
 
 def test_containerlab_writes_a_topology_named_for_the_repository_to_stdout(
@@ -329,7 +335,7 @@ def test_containerlab_writes_a_topology_named_for_the_repository_to_stdout(
     topology = yaml.safe_load(result.stdout)
     assert topology["name"] == "single-dc-l3ls"
     assert topology["mgmt"] == {"network": "single-dc-l3ls", "ipv4-subnet": "172.20.20.0/24"}
-    assert topology["topology"]["kinds"]["arista_ceos"]["image"] == "ceos"
+    assert topology["topology"]["kinds"]["arista_ceos"]["image"] == IMAGE
     assert topology["topology"]["nodes"]["dc1-spine1"] == {
         "kind": "arista_ceos",
         "mgmt-ipv4": "172.20.20.3",
@@ -348,11 +354,12 @@ def test_the_management_network_and_subnet_given_are_the_labs(repo, ansible, col
     }
 
 
-def test_containerlab_without_a_ceos_image_is_refused(repo, ansible, collections):
-    result = lab(repo, "--playbook", "build.yml", "--for", "containerlab")
+@pytest.mark.parametrize("target", ["netclab", "containerlab"])
+def test_a_lab_without_a_ceos_image_is_refused(repo, ansible, collections, target):
+    result = invoke(repo, "--playbook", "build.yml", "--for", target)
 
     assert result.exit_code == 2
-    assert result.stderr.strip() == "no lab: --for containerlab needs --ceos-image"
+    assert result.stderr.strip() == "no lab: no cEOS image named -- pass --ceos-image"
     assert not (ansible / "call.json").exists()
 
 

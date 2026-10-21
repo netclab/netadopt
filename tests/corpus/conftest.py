@@ -39,7 +39,7 @@ from netadopt.ansiblecfg import read_ansible_cfg
 from netadopt.cli import app
 from netadopt.galaxy import ensure_collections
 from netadopt.inventory import Inventory, read_inventory
-from netadopt.lab import Lab, netclab_values, values_yaml
+from netadopt.lab import Ceos, Lab, netclab_values, values_yaml
 from netadopt.playbook import IMPORT_PLAYBOOK_KEYS, TASK_KEYS, read_playbook
 from netadopt.reconstruct import Reconstructed, reconstruct
 from netadopt.render import Rendered, render
@@ -267,10 +267,14 @@ def rendered(
     return out
 
 
+# cEOS cannot be pulled and the chart names no image of its own: a lab names one.
+CEOS_IMAGE = "ceos:4.36.1F"
+
+
 @pytest.fixture
 def lab(rendered: Rendered) -> Lab:
     """The values for the repository's fabric. Nothing reads them without this."""
-    built = netclab_values(rendered.hosts)
+    built = netclab_values(rendered.hosts, ceos=Ceos(image=CEOS_IMAGE))
     assert built.problem is None, built.problem
     return built
 
