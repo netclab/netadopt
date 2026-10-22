@@ -6,6 +6,9 @@ repository's model as Kubernetes resources. It reads *repositories*, never devic
 Arista AVD first: netadopt uses AVD's own data model - no new schema, no translation.
 The resources carry the repository's inventory, play and vars exactly as written.
 
+Screenshots, and a quick start from AVD's own example to a containerlab twin run from
+Kubernetes: [netclab.dev/avd](https://netclab.dev/avd/).
+
 ## Installing
 
 With [uv](https://docs.astral.sh/uv/), to run it once without installing:
